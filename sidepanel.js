@@ -337,17 +337,18 @@ function buildInput(userText) {
   return input;
 }
 
-async function normalizeInputForModel(text) {
+async function normalizeInputForModel(text, userQuestion) {
   const answerLanguage = settings.answerLanguage;
-  const userIsHebrew = containsHebrew(text);
+  const inputContainsHebrew = containsHebrew(text);
+  const questionIsHebrew = containsHebrew(userQuestion);
   let modelInput = text;
 
-  if (userIsHebrew) {
+  if (inputContainsHebrew) {
     setStatus('מתרגם קלט...', 'warn');
     modelInput = await translate(text, 'he', 'en');
   }
 
-  const wantsHebrew = answerLanguage === 'he' || (answerLanguage === 'auto' && userIsHebrew);
+  const wantsHebrew = answerLanguage === 'he' || (answerLanguage === 'auto' && questionIsHebrew);
   const languageInstruction = wantsHebrew
     ? '\nAnswer in English first; the application will translate your final answer to Hebrew.'
     : '\nAnswer in English.';
@@ -392,7 +393,7 @@ async function sendPrompt(rawText) {
 
   try {
     const fullInput = buildInput(text);
-    const { modelInput, wantsHebrew } = await normalizeInputForModel(fullInput);
+    const { modelInput, wantsHebrew } = await normalizeInputForModel(fullInput, text);
     const model = await ensureSession();
     setStatus('חושב...', 'warn');
 
