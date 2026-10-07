@@ -7,42 +7,28 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <main class="app">
-    <header>
+  <main class="launcher">
+    <div class="brand">
+      <div class="logo">N</div>
       <div>
         <h1>Gemini Nano</h1>
-        <p>AI מקומי מתוך Chrome</p>
+        <p>Local AI Workspace</p>
       </div>
-      <span id="status" class="status">בודק...</span>
-    </header>
+    </div>
 
-    <section id="notice" class="notice hidden"></section>
-
-    <section id="messages" class="messages" aria-live="polite">
-      <div class="message assistant">
-        <div class="bubble">
-          שלום! אני משתמש במודל המקומי של Chrome. אפשר לכתוב בעברית או באנגלית.
-        </div>
+    <div class="status-card">
+      <span id="dot" class="dot"></span>
+      <div>
+        <strong id="status">בודק את המודל...</strong>
+        <small id="statusDetail">הכול פועל מקומית ב-Chrome</small>
       </div>
-    </section>
+    </div>
 
-    <section id="downloadBox" class="download hidden">
-      <div class="download-row">
-        <span>מוריד את המודל המקומי...</span>
-        <span id="downloadPercent">0%</span>
-      </div>
-      <progress id="downloadProgress" value="0" max="100"></progress>
-    </section>
+    <button id="openPanel" class="primary">פתח סביבת עבודה</button>
+    <button id="newChat" class="secondary">פתח שיחה חדשה</button>
 
-    <form id="chatForm" class="composer">
-      <textarea id="prompt" rows="3" placeholder="כתוב הודעה..." required></textarea>
-      <div class="actions">
-        <button id="clearBtn" type="button" class="secondary">נקה שיחה</button>
-        <button id="sendBtn" type="submit">שלח</button>
-      </div>
-    </form>
+    <div class="privacy">ללא API key • היסטוריה מקומית • Gemini Nano</div>
   </main>
-
   <script src="popup.js"></script>
 </body>
 </html>
