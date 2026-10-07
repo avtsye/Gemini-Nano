@@ -30,6 +30,7 @@
       <div class="side-bottom">
         <button id="settingsBtn" class="nav-btn">⚙ הגדרות</button>
         <button id="exportBtn" class="nav-btn">⇩ ייצוא שיחה</button>
+        <button id="diagnosticsBtn" class="nav-btn">◉ אבחון מערכת</button>
       </div>
     </aside>
 
@@ -49,6 +50,14 @@
       </section>
 
       <section id="notice" class="notice hidden"></section>
+
+      <section id="setupBox" class="setup-box hidden">
+        <div>
+          <strong>נדרשת הכנה חד-פעמית</strong>
+          <span id="setupDetail">Chrome צריך להכין את המודל המקומי וחבילות התרגום.</span>
+        </div>
+        <button id="prepareAiBtn" class="prepare-btn">הכן AI מקומי</button>
+      </section>
 
       <section id="welcome" class="welcome">
         <div class="hero-icon">N</div>
@@ -93,6 +102,22 @@
     <button data-tool="translate-page">תרגם לעברית</button>
     <button data-tool="ask-page">צרף עמוד לשיחה</button>
   </div>
+
+  <dialog id="diagnosticsDialog">
+    <div class="settings-card">
+      <div class="dialog-head">
+        <div>
+          <h2>אבחון AI מקומי</h2>
+          <p>מצב הרכיבים של Chrome במחשב הזה.</p>
+        </div>
+        <button id="closeDiagnostics" class="icon-btn">×</button>
+      </div>
+      <div id="diagnosticsContent" class="diagnostics-content"></div>
+      <div class="dialog-actions">
+        <button id="refreshDiagnostics" class="primary">בדוק שוב</button>
+      </div>
+    </div>
+  </dialog>
 
   <dialog id="settingsDialog">
     <form method="dialog" class="settings-card">
