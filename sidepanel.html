@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gemini Nano Workspace</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="shell">
+    <aside id="sidebar" class="sidebar">
+      <div class="side-top">
+        <div class="brand-row">
+          <div class="logo">N</div>
+          <div>
+            <strong>Gemini Nano</strong>
+            <span>Local Workspace</span>
+          </div>
+        </div>
+        <button id="newChat" class="icon-btn" title="שיחה חדשה">＋</button>
+      </div>
+
+      <label class="search">
+        <span>⌕</span>
+        <input id="chatSearch" type="search" placeholder="חיפוש בשיחות">
+      </label>
+
+      <div id="chatList" class="chat-list"></div>
+
+      <div class="side-bottom">
+        <button id="settingsBtn" class="nav-btn">⚙ הגדרות</button>
+        <button id="exportBtn" class="nav-btn">⇩ ייצוא שיחה</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button id="sidebarToggle" class="icon-btn" title="הצג/הסתר שיחות">☰</button>
+        <div class="title-wrap">
+          <input id="chatTitle" class="chat-title" value="שיחה חדשה" aria-label="שם השיחה">
+          <span id="status" class="status">בודק...</span>
+        </div>
+        <button id="pageToolsBtn" class="tool-btn" title="כלי עמוד">✨ עמוד</button>
+      </header>
+
+      <section id="downloadBox" class="download hidden">
+        <div><span>מכין רכיב מקומי</span><strong id="downloadPercent">0%</strong></div>
+        <progress id="downloadProgress" value="0" max="100"></progress>
+      </section>
+
+      <section id="notice" class="notice hidden"></section>
+
+      <section id="welcome" class="welcome">
+        <div class="hero-icon">N</div>
+        <h1>ה-AI המקומי שלך</h1>
+        <p>צ'אט, סיכום עמודים, הסברים וניתוח טקסט — מתוך Chrome ובמחשב שלך.</p>
+        <div class="quick-grid">
+          <button data-tool="summarize-page">סכם את העמוד</button>
+          <button data-tool="explain-page">הסבר את העמוד</button>
+          <button data-tool="key-points">חלץ נקודות מפתח</button>
+          <button data-tool="ask-page">שאל על העמוד</button>
+        </div>
+      </section>
+
+      <section id="messages" class="messages" aria-live="polite"></section>
+
+      <div id="contextChip" class="context-chip hidden">
+        <span id="contextLabel">העמוד הנוכחי מצורף</span>
+        <button id="clearContext" title="הסר הקשר">×</button>
+      </div>
+
+      <form id="composer" class="composer">
+        <textarea id="prompt" rows="1" placeholder="כתוב ל-Gemini Nano..." autocomplete="off"></textarea>
+        <div class="composer-bar">
+          <div class="left-actions">
+            <button id="attachPage" type="button" class="mini-btn" title="צרף את תוכן העמוד">⊕ עמוד</button>
+            <button id="selectionBtn" type="button" class="mini-btn" title="קרא את הטקסט המסומן">◩ מסומן</button>
+          </div>
+          <div class="right-actions">
+            <span id="counter" class="counter">0</span>
+            <button id="stopBtn" type="button" class="stop hidden">■</button>
+            <button id="sendBtn" type="submit" class="send">➤</button>
+          </div>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <div id="toolsMenu" class="menu hidden">
+    <button data-tool="summarize-page">סכם עמוד</button>
+    <button data-tool="key-points">נקודות מפתח</button>
+    <button data-tool="explain-page">הסבר בפשטות</button>
+    <button data-tool="translate-page">תרגם לעברית</button>
+    <button data-tool="ask-page">צרף עמוד לשיחה</button>
+  </div>
+
+  <dialog id="settingsDialog">
+    <form method="dialog" class="settings-card">
+      <div class="dialog-head">
+        <div>
+          <h2>הגדרות</h2>
+          <p>הכול נשמר מקומית בדפדפן.</p>
+        </div>
+        <button value="cancel" class="icon-btn">×</button>
+      </div>
+
+      <label>
+        <span>סגנון תשובה</span>
+        <select id="responseStyle">
+          <option value="concise">תמציתי</option>
+          <option value="balanced">מאוזן</option>
+          <option value="detailed">מפורט</option>
+        </select>
+      </label>
+
+      <label>
+        <span>שפת תשובה</span>
+        <select id="answerLanguage">
+          <option value="auto">כמו שפת השאלה</option>
+          <option value="he">עברית</option>
+          <option value="en">English</option>
+        </select>
+      </label>
+
+      <label>
+        <span>הנחיית מערכת</span>
+        <textarea id="systemPrompt" rows="5"></textarea>
+      </label>
+
+      <label class="check-row">
+        <input id="autoTitle" type="checkbox">
+        <span>צור שם לשיחה אוטומטית מההודעה הראשונה</span>
+      </label>
+
+      <div class="dialog-actions">
+        <button id="saveSettings" value="default" class="primary">שמור</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
