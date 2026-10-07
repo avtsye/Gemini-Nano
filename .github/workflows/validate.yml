@@ -1,0 +1,29 @@
+name: Validate extension
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Validate manifest JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8')); console.log('manifest OK')"
+      - name: Check JavaScript syntax
+        run: |
+          node --check background.js
+          node --check popup.js
+          node --check workspace.js
+      - name: Ensure referenced files exist
+        run: |
+          test -f sidepanel.html
+          test -f sidepanel.css
+          test -f workspace.js
+          test -f popup.html
+          test -f popup.css
