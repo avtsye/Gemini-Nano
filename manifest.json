@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Gemini Nano Local Workspace",
-  "version": "0.5.1",
-  "description": "סביבת AI מקומית ל-Chrome עם Gemini Nano: צ'אט, היסטוריה, כלי עמוד, טקסט מסומן וייצוא — ללא API key.",
-  "minimum_chrome_version": "138",
+  "version": "1.0.0",
+  "description": "סביבת AI מקומית ל-Chrome עם Gemini Nano: צ'אט, זיכרון, עמודים, קבצים, תמונות, אבחון וכלי עבודה — ללא API key.",
+  "minimum_chrome_version": "148",
   "permissions": [
     "storage",
     "activeTab",
