@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Nano Local Chat",
+  "version": "0.1.0",
+  "description": "צ'אט מקומי עם Gemini Nano המובנה ב-Chrome, ללא API key.",
+  "minimum_chrome_version": "138",
+  "action": {
+    "default_title": "Gemini Nano",
+    "default_popup": "popup.html"
+  }
+}
