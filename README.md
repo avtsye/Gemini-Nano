@@ -2,9 +2,23 @@
 
 סביבת AI מקומית ל-Chrome המבוססת על **Gemini Nano / Chrome Built-in AI**. המטרה היא להפוך את ה-Prompt API מכלי הדגמה לעוזר יום-יומי אמיתי — בלי API key ובלי שרת AI חיצוני עבור יצירת התשובה.
 
-## גרסה 0.5.0
+## גרסה 0.5.1
 
 הפרויקט עבר מתיבת popup פשוטה ל-**Local AI Workspace** מלאה בתוך Side Panel של Chrome.
+
+### תיקון 0.5.1 — הכנת מודל ואבחון
+
+בגרסה זו תוקן מסלול האתחול הראשוני. כאשר Gemini Nano או חבילות התרגום עדיין לא הורדו, מוצג כפתור **"הכן AI מקומי"** שמתחיל את יצירת/הורדת הרכיבים ישירות מתוך פעולת משתמש — בהתאם לדרישת Chrome.
+
+נוסף גם מסך **אבחון מערכת** שמציג:
+- גרסת Chrome.
+- זמינות Prompt API.
+- מצב Gemini Nano: available / downloadable / downloading / unavailable.
+- זמינות Translator API.
+- מצב חבילות he→en ו-en→he.
+- מצב user activation.
+
+אם המודל אינו עובד, ניתן לבדוק גם את `chrome://on-device-internals` → Model Status.
 
 ### צ'אט מקומי
 
