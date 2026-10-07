@@ -14,7 +14,7 @@
           <div class="logo">N</div>
           <div>
             <strong>Gemini Nano</strong>
-            <span>Local Workspace</span>
+            <span>Local Workspace 1.0</span>
           </div>
         </div>
         <button id="newChat" class="icon-btn" title="שיחה חדשה">＋</button>
@@ -25,12 +25,21 @@
         <input id="chatSearch" type="search" placeholder="חיפוש בשיחות">
       </label>
 
+      <div class="folder-row">
+        <select id="folderFilter" title="סינון תיקייה">
+          <option value="">כל התיקיות</option>
+          <option value="מועדפים">מועדפים</option>
+          <option value="עבודה">עבודה</option>
+          <option value="לימוד">לימוד</option>
+        </select>
+      </div>
+
       <div id="chatList" class="chat-list"></div>
 
       <div class="side-bottom">
         <button id="settingsBtn" class="nav-btn">⚙ הגדרות</button>
-        <button id="exportBtn" class="nav-btn">⇩ ייצוא שיחה</button>
         <button id="diagnosticsBtn" class="nav-btn">◉ אבחון מערכת</button>
+        <button id="exportBtn" class="nav-btn">⇩ ייצוא שיחה</button>
       </div>
     </aside>
 
@@ -39,8 +48,12 @@
         <button id="sidebarToggle" class="icon-btn" title="הצג/הסתר שיחות">☰</button>
         <div class="title-wrap">
           <input id="chatTitle" class="chat-title" value="שיחה חדשה" aria-label="שם השיחה">
-          <span id="status" class="status">בודק...</span>
+          <div class="meta-row">
+            <span id="status" class="status">בודק...</span>
+            <span id="contextMeter" class="context-meter">Context: —</span>
+          </div>
         </div>
+        <button id="paletteBtn" class="tool-btn" title="פקודות">⌘K</button>
         <button id="pageToolsBtn" class="tool-btn" title="כלי עמוד">✨ עמוד</button>
       </header>
 
@@ -62,7 +75,7 @@
       <section id="welcome" class="welcome">
         <div class="hero-icon">N</div>
         <h1>ה-AI המקומי שלך</h1>
-        <p>צ'אט, סיכום עמודים, הסברים וניתוח טקסט — מתוך Chrome ובמחשב שלך.</p>
+        <p>צ'אט, עמודים, טקסט מסומן, קבצים ותמונות — מתוך Chrome ובמחשב שלך.</p>
         <div class="quick-grid">
           <button data-tool="summarize-page">סכם את העמוד</button>
           <button data-tool="explain-page">הסבר את העמוד</button>
@@ -73,8 +86,11 @@
 
       <section id="messages" class="messages" aria-live="polite"></section>
 
+      <div id="attachments" class="attachments hidden"></div>
+
       <div id="contextChip" class="context-chip hidden">
         <span id="contextLabel">העמוד הנוכחי מצורף</span>
+        <label class="live-toggle"><input id="livePage" type="checkbox"> מצב אתר חי</label>
         <button id="clearContext" title="הסר הקשר">×</button>
       </div>
 
@@ -83,15 +99,20 @@
         <div class="composer-bar">
           <div class="left-actions">
             <button id="attachPage" type="button" class="mini-btn" title="צרף את תוכן העמוד">⊕ עמוד</button>
-            <button id="selectionBtn" type="button" class="mini-btn" title="קרא את הטקסט המסומן">◩ מסומן</button>
+            <button id="selectionBtn" type="button" class="mini-btn" title="קרא טקסט מסומן">◩ מסומן</button>
+            <button id="fileBtn" type="button" class="mini-btn" title="צרף קובץ">📎 קובץ</button>
+            <button id="screenBtn" type="button" class="mini-btn" title="צרף צילום מסך">▣ מסך</button>
           </div>
           <div class="right-actions">
             <span id="counter" class="counter">0</span>
-            <button id="stopBtn" type="button" class="stop hidden">■</button>
-            <button id="sendBtn" type="submit" class="send">➤</button>
+            <button id="stopBtn" type="button" class="stop hidden" title="עצור">■</button>
+            <button id="sendBtn" type="submit" class="send" title="שלח">➤</button>
           </div>
         </div>
       </form>
+
+      <input id="fileInput" type="file" class="hidden" multiple
+        accept=".txt,.md,.markdown,.json,.csv,.html,.htm,.log,.xml,image/*">
     </main>
   </div>
 
@@ -103,17 +124,25 @@
     <button data-tool="ask-page">צרף עמוד לשיחה</button>
   </div>
 
+  <dialog id="paletteDialog" class="palette-dialog">
+    <div class="palette-card">
+      <input id="paletteSearch" type="search" placeholder="חפש פקודה...">
+      <div id="paletteList" class="palette-list"></div>
+    </div>
+  </dialog>
+
   <dialog id="diagnosticsDialog">
     <div class="settings-card">
       <div class="dialog-head">
         <div>
           <h2>אבחון AI מקומי</h2>
-          <p>מצב הרכיבים של Chrome במחשב הזה.</p>
+          <p>מצב הרכיבים והיכולות במחשב הזה.</p>
         </div>
         <button id="closeDiagnostics" class="icon-btn">×</button>
       </div>
       <div id="diagnosticsContent" class="diagnostics-content"></div>
       <div class="dialog-actions">
+        <button id="runSelfTest" class="secondary-action">בדיקת קצה-לקצה</button>
         <button id="refreshDiagnostics" class="primary">בדוק שוב</button>
       </div>
     </div>
@@ -128,6 +157,16 @@
         </div>
         <button value="cancel" class="icon-btn">×</button>
       </div>
+
+      <label>
+        <span>פרופיל עוזר</span>
+        <select id="profile">
+          <option value="general">כללי</option>
+          <option value="coder">מתכנת</option>
+          <option value="research">חוקר</option>
+          <option value="editor">עורך טקסט</option>
+        </select>
+      </label>
 
       <label>
         <span>סגנון תשובה</span>
@@ -148,13 +187,28 @@
       </label>
 
       <label>
+        <span>Temperature <b id="temperatureValue">0.8</b></span>
+        <input id="temperature" type="range" min="0" max="2" step="0.1" value="0.8">
+      </label>
+
+      <label>
+        <span>Top-K <b id="topKValue">8</b></span>
+        <input id="topK" type="range" min="1" max="40" step="1" value="8">
+      </label>
+
+      <label>
         <span>הנחיית מערכת</span>
         <textarea id="systemPrompt" rows="5"></textarea>
       </label>
 
       <label class="check-row">
         <input id="autoTitle" type="checkbox">
-        <span>צור שם לשיחה אוטומטית מההודעה הראשונה</span>
+        <span>צור שם לשיחה אוטומטית</span>
+      </label>
+
+      <label class="check-row">
+        <input id="smartContext" type="checkbox">
+        <span>בחר אוטומטית קטעים רלוונטיים מעמודים וקבצים</span>
       </label>
 
       <div class="dialog-actions">
@@ -163,6 +217,6 @@
     </form>
   </dialog>
 
-  <script src="sidepanel.js"></script>
+  <script src="workspace.js"></script>
 </body>
 </html>
