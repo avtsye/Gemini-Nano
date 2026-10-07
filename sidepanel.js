@@ -32,7 +32,15 @@ const els = {
   saveSettings: $('#saveSettings'),
   downloadBox: $('#downloadBox'),
   downloadProgress: $('#downloadProgress'),
-  downloadPercent: $('#downloadPercent')
+  downloadPercent: $('#downloadPercent'),
+  setupBox: $('#setupBox'),
+  setupDetail: $('#setupDetail'),
+  prepareAiBtn: $('#prepareAiBtn'),
+  diagnosticsBtn: $('#diagnosticsBtn'),
+  diagnosticsDialog: $('#diagnosticsDialog'),
+  diagnosticsContent: $('#diagnosticsContent'),
+  closeDiagnostics: $('#closeDiagnostics'),
+  refreshDiagnostics: $('#refreshDiagnostics')
 };
 
 const DEFAULT_SETTINGS = {
@@ -46,6 +54,9 @@ let chats = [];
 let activeChatId = null;
 let settings = { ...DEFAULT_SETTINGS };
 let modelSession = null;
+let translatorHeEn = null;
+let translatorEnHe = null;
+let modelAvailability = 'unknown';
 let busy = false;
 let abortController = null;
 let pageContext = null;
@@ -209,33 +220,48 @@ function containsHebrew(text) {
   return /[\u0590-\u05FF]/.test(text);
 }
 
-async function createTranslator(sourceLanguage, targetLanguage) {
-  if (!('Translator' in self)) {
-    throw new Error('Translator API אינו זמין בגרסת Chrome הזו.');
-  }
-  const availability = await Translator.availability({ sourceLanguage, targetLanguage });
-  if (availability === 'unavailable') {
-    throw new Error('חבילת התרגום המבוקשת אינה זמינה.');
-  }
-  return Translator.create({
+function translatorOptions(sourceLanguage, targetLanguage) {
+  return {
     sourceLanguage,
     targetLanguage,
     monitor(m) {
       m.addEventListener('downloadprogress', (event) => {
         const percent = Math.round(event.loaded * 100);
+        els.downloadBox.classList.remove('hidden');
+        els.downloadProgress.value = percent;
+        els.downloadPercent.textContent = percent + '%';
         setStatus('מוריד תרגום ' + percent + '%', 'warn');
       });
     }
-  });
+  };
+}
+
+async function getTranslator(sourceLanguage, targetLanguage) {
+  if (!('Translator' in self)) {
+    throw new Error('Translator API אינו זמין בגרסת Chrome הזו.');
+  }
+
+  if (sourceLanguage === 'he' && targetLanguage === 'en' && translatorHeEn) return translatorHeEn;
+  if (sourceLanguage === 'en' && targetLanguage === 'he' && translatorEnHe) return translatorEnHe;
+
+  const availability = await Translator.availability({ sourceLanguage, targetLanguage });
+  if (availability === 'unavailable') {
+    throw new Error('חבילת התרגום ' + sourceLanguage + '→' + targetLanguage + ' אינה זמינה.');
+  }
+  if ((availability === 'downloadable' || availability === 'downloading') && !navigator.userActivation.isActive) {
+    els.setupBox.classList.remove('hidden');
+    throw new Error('חבילת התרגום עדיין לא מוכנה. לחץ על "הכן AI מקומי" ולאחר מכן נסה שוב.');
+  }
+
+  const translator = await Translator.create(translatorOptions(sourceLanguage, targetLanguage));
+  if (sourceLanguage === 'he' && targetLanguage === 'en') translatorHeEn = translator;
+  if (sourceLanguage === 'en' && targetLanguage === 'he') translatorEnHe = translator;
+  return translator;
 }
 
 async function translate(text, sourceLanguage, targetLanguage) {
-  const translator = await createTranslator(sourceLanguage, targetLanguage);
-  try {
-    return await translator.translate(text);
-  } finally {
-    translator.destroy?.();
-  }
+  const translator = await getTranslator(sourceLanguage, targetLanguage);
+  return translator.translate(text);
 }
 
 function styleInstruction() {
@@ -247,18 +273,28 @@ function styleInstruction() {
   return map[settings.responseStyle] || map.balanced;
 }
 
+function languageModelOptions() {
+  return {
+    expectedInputs: [{ type: 'text', languages: ['en'] }],
+    expectedOutputs: [{ type: 'text', languages: ['en'] }]
+  };
+}
+
 async function ensureSession() {
   if (modelSession) return modelSession;
   if (!('LanguageModel' in self)) {
     throw new Error('Prompt API לא זמין. נדרש Chrome 138 ומעלה במחשב נתמך.');
   }
 
-  const options = {
-    expectedInputs: [{ type: 'text', languages: ['en'] }],
-    expectedOutputs: [{ type: 'text', languages: ['en'] }]
-  };
+  const options = languageModelOptions();
   const availability = await LanguageModel.availability(options);
+  modelAvailability = availability;
   if (availability === 'unavailable') throw new Error('Gemini Nano אינו זמין במכשיר הזה.');
+
+  if ((availability === 'downloadable' || availability === 'downloading') && !navigator.userActivation.isActive) {
+    els.setupBox.classList.remove('hidden');
+    throw new Error('Gemini Nano עדיין לא מוכן. לחץ על "הכן AI מקומי" כדי להתחיל את ההורדה בצורה ש-Chrome מאשר.');
+  }
 
   if (availability === 'downloadable' || availability === 'downloading') {
     els.downloadBox.classList.remove('hidden');
@@ -284,6 +320,121 @@ async function ensureSession() {
   });
   setStatus('מוכן • מקומי', 'ok');
   return modelSession;
+}
+
+async function prepareLocalAI() {
+  hideNotice();
+  if (!('LanguageModel' in self)) {
+    showNotice('Prompt API אינו קיים ב-Chrome הזה.');
+    return;
+  }
+  if (!navigator.userActivation.isActive) {
+    showNotice('לחץ שוב על הכפתור כדי לאשר ל-Chrome להתחיל הורדה מקומית.');
+    return;
+  }
+
+  els.prepareAiBtn.disabled = true;
+  els.setupBox.classList.remove('hidden');
+  els.downloadBox.classList.remove('hidden');
+  setStatus('מכין AI מקומי...', 'warn');
+
+  try {
+    // Start create() calls immediately while the click still counts as user activation.
+    const modelPromise = modelSession
+      ? Promise.resolve(modelSession)
+      : LanguageModel.create({
+          ...languageModelOptions(),
+          initialPrompts: [{
+            role: 'system',
+            content: settings.systemPrompt + '\n' + styleInstruction()
+          }],
+          monitor(m) {
+            m.addEventListener('downloadprogress', (event) => {
+              const p = Math.round(event.loaded * 100);
+              els.downloadProgress.value = p;
+              els.downloadPercent.textContent = p + '%';
+              setStatus('מוריד Gemini Nano ' + p + '%', 'warn');
+            });
+          }
+        });
+
+    let heEnPromise = Promise.resolve(null);
+    let enHePromise = Promise.resolve(null);
+    if ('Translator' in self) {
+      heEnPromise = translatorHeEn ? Promise.resolve(translatorHeEn) : Translator.create(translatorOptions('he', 'en'));
+      enHePromise = translatorEnHe ? Promise.resolve(translatorEnHe) : Translator.create(translatorOptions('en', 'he'));
+    }
+
+    const [model, heEn, enHe] = await Promise.all([modelPromise, heEnPromise, enHePromise]);
+    modelSession = model;
+    if (heEn) translatorHeEn = heEn;
+    if (enHe) translatorEnHe = enHe;
+    modelAvailability = 'available';
+
+    els.setupBox.classList.add('hidden');
+    els.downloadBox.classList.add('hidden');
+    setStatus('מוכן • מקומי', 'ok');
+    showNotice('ה-AI המקומי מוכן. אפשר לשלוח הודעה.');
+    setTimeout(hideNotice, 2200);
+  } catch (error) {
+    setStatus('הכנה נכשלה', 'error');
+    showNotice('הכנת ה-AI נכשלה: ' + (error?.message || String(error)) + ' אפשר לפתוח "אבחון מערכת" לפרטים.');
+  } finally {
+    els.prepareAiBtn.disabled = false;
+  }
+}
+
+async function collectDiagnostics() {
+  const rows = [];
+  const add = (name, value) => rows.push({ name, value });
+
+  add('Chrome', navigator.userAgent.match(/Chrome\/([0-9.]+)/)?.[1] || 'לא זוהה');
+  add('מערכת', navigator.platform || 'לא ידוע');
+  add('Prompt API', 'LanguageModel' in self ? 'קיים' : 'חסר');
+  add('Translator API', 'Translator' in self ? 'קיים' : 'חסר');
+
+  if ('LanguageModel' in self) {
+    try {
+      add('Gemini Nano', await LanguageModel.availability(languageModelOptions()));
+    } catch (e) {
+      add('Gemini Nano', 'שגיאה: ' + (e.message || e));
+    }
+  }
+
+  if ('Translator' in self) {
+    for (const [from, to] of [['he','en'], ['en','he']]) {
+      try {
+        add('תרגום ' + from + '→' + to, await Translator.availability({ sourceLanguage: from, targetLanguage: to }));
+      } catch (e) {
+        add('תרגום ' + from + '→' + to, 'שגיאה: ' + (e.message || e));
+      }
+    }
+  }
+
+  add('User activation', navigator.userActivation?.isActive ? 'פעיל כעת' : 'לא פעיל');
+  return rows;
+}
+
+async function renderDiagnostics() {
+  els.diagnosticsContent.textContent = 'בודק...';
+  const rows = await collectDiagnostics();
+  els.diagnosticsContent.innerHTML = '';
+
+  for (const row of rows) {
+    const item = document.createElement('div');
+    item.className = 'diag-row';
+    const name = document.createElement('strong');
+    name.textContent = row.name;
+    const value = document.createElement('span');
+    value.textContent = row.value;
+    item.append(name, value);
+    els.diagnosticsContent.appendChild(item);
+  }
+
+  const help = document.createElement('div');
+  help.className = 'diag-help';
+  help.textContent = 'אם Gemini Nano נשאר unavailable או שההורדה נכשלת, פתח בכרום chrome://on-device-internals ובדוק את Model Status. ודא גם שיש לפחות כ-10GB מקום פנוי אחרי הורדת המודל.';
+  els.diagnosticsContent.appendChild(help);
 }
 
 async function extractPage(selectionOnly = false) {
@@ -482,8 +633,17 @@ async function checkAvailability() {
       downloading: ['בהורדה', 'warn'],
       unavailable: ['לא זמין', 'error']
     };
+    modelAvailability = a;
     const [label, type] = map[a] || [a, ''];
     setStatus(label, type);
+    if (a === 'downloadable' || a === 'downloading') {
+      els.setupBox.classList.remove('hidden');
+      els.setupDetail.textContent = a === 'downloadable'
+        ? 'המודל וחבילות התרגום עדיין לא הוכנו במחשב הזה.'
+        : 'Chrome עדיין מוריד את רכיבי ה-AI המקומיים.';
+    } else if (a === 'available') {
+      els.setupBox.classList.add('hidden');
+    }
   } catch (error) {
     setStatus('שגיאה', 'error');
     showNotice(error.message);
@@ -584,6 +744,13 @@ els.attachPage.addEventListener('click', () => attachPage(false));
 els.selectionBtn.addEventListener('click', () => attachPage(true));
 els.clearContext.addEventListener('click', () => { pageContext = null; renderContext(); });
 els.exportBtn.addEventListener('click', exportChat);
+els.prepareAiBtn.addEventListener('click', prepareLocalAI);
+els.diagnosticsBtn.addEventListener('click', async () => {
+  els.diagnosticsDialog.showModal();
+  await renderDiagnostics();
+});
+els.closeDiagnostics.addEventListener('click', () => els.diagnosticsDialog.close());
+els.refreshDiagnostics.addEventListener('click', renderDiagnostics);
 
 els.chatTitle.addEventListener('change', async () => {
   const chat = activeChat();
