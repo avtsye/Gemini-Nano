@@ -231,3 +231,48 @@ dialog::backdrop { background: rgb(0 0 0 / .28); backdrop-filter: blur(2px); }
   .sidebar.collapsed { display: none; }
   .tool-btn { padding-inline: 7px; }
 }
+
+.setup-box {
+  margin: 8px 10px 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, #ed6c02 28%, transparent);
+  background: color-mix(in srgb, #ed6c02 8%, Canvas);
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+}
+.setup-box strong { display: block; font-size: .72rem; }
+.setup-box span { display: block; margin-top: 2px; font-size: .62rem; opacity: .62; line-height: 1.4; }
+.prepare-btn {
+  flex: none;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 10px;
+  background: #ed6c02;
+  color: white;
+  font-size: .66rem;
+  font-weight: 650;
+}
+.prepare-btn:disabled { opacity: .55; cursor: default; }
+.diagnostics-content { display: grid; gap: 8px; }
+.diag-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--soft);
+}
+.diag-row strong { font-size: .7rem; }
+.diag-row span { font-size: .64rem; opacity: .7; direction: ltr; text-align: left; }
+.diag-help {
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: var(--soft);
+  font-size: .65rem;
+  line-height: 1.5;
+}
