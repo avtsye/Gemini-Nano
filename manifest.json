@@ -1,11 +1,24 @@
 {
   "manifest_version": 3,
-  "name": "Gemini Nano Local Chat",
-  "version": "0.1.0",
-  "description": "צ'אט מקומי עם Gemini Nano המובנה ב-Chrome, ללא API key.",
+  "name": "Gemini Nano Local Workspace",
+  "version": "0.5.0",
+  "description": "סביבת AI מקומית ל-Chrome עם Gemini Nano: צ'אט, היסטוריה, כלי עמוד, טקסט מסומן וייצוא — ללא API key.",
   "minimum_chrome_version": "138",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "sidePanel",
+    "contextMenus"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_title": "Gemini Nano",
     "default_popup": "popup.html"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   }
 }
