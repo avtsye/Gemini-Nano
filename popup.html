@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gemini Nano</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>Gemini Nano</h1>
+        <p>AI מקומי מתוך Chrome</p>
+      </div>
+      <span id="status" class="status">בודק...</span>
+    </header>
+
+    <section id="notice" class="notice hidden"></section>
+
+    <section id="messages" class="messages" aria-live="polite">
+      <div class="message assistant">
+        <div class="bubble">
+          שלום! אני משתמש במודל המקומי של Chrome. אפשר לכתוב בעברית או באנגלית.
+        </div>
+      </div>
+    </section>
+
+    <section id="downloadBox" class="download hidden">
+      <div class="download-row">
+        <span>מוריד את המודל המקומי...</span>
+        <span id="downloadPercent">0%</span>
+      </div>
+      <progress id="downloadProgress" value="0" max="100"></progress>
+    </section>
+
+    <form id="chatForm" class="composer">
+      <textarea id="prompt" rows="3" placeholder="כתוב הודעה..." required></textarea>
+      <div class="actions">
+        <button id="clearBtn" type="button" class="secondary">נקה שיחה</button>
+        <button id="sendBtn" type="submit">שלח</button>
+      </div>
+    </form>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>
