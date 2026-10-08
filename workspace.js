@@ -273,6 +273,44 @@ function relevantContext(text,query,maxChars=9000){
   const chunks=splitChunks(text,2600,220).map((t,i)=>({t,i,s:scoreChunk(t,query)}));chunks.sort((a,b)=>b.s-a.s||a.i-b.i);
   return chunks.slice(0,4).sort((a,b)=>a.i-b.i).map(x=>x.t).join('\n\n[…קטע נוסף…]\n\n').slice(0,maxChars)
 }
+function pageAccessInfo(url){
+  try{
+    const u=new URL(url||'');
+    if(/^https?:$/.test(u.protocol))return {supported:true,reason:''};
+    if(u.protocol==='file:')return {supported:false,reason:'עמודי file:// דורשים הרשאת גישה לקבצים בהגדרות התוסף.'};
+    if(u.protocol==='chrome:'||u.protocol==='chrome-extension:'||u.protocol==='edge:'||u.protocol==='about:'){
+      return {supported:false,reason:'Chrome אינו מאפשר לתוספים לקרוא עמודי מערכת פנימיים.'};
+    }
+    return {supported:false,reason:'סוג העמוד הזה אינו מאפשר קריאה על-ידי התוסף.'};
+  }catch{
+    return {supported:false,reason:'לא ניתן לזהות את כתובת העמוד הפעיל.'};
+  }
+}
+
+async function getActiveTabForPageTools(){
+  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+  if(!tab?.id)throw new Error('לא נמצא טאב פעיל.');
+  const info=pageAccessInfo(tab.url);
+  if(!info.supported)throw new Error(info.reason);
+  return tab;
+}
+
+async function refreshPageToolAvailability(){
+  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+  const info=pageAccessInfo(tab?.url);
+  const buttons=[...document.querySelectorAll('[data-tool]')];
+  for(const button of buttons){
+    button.disabled=!info.supported;
+    button.title=info.supported?'':info.reason;
+    button.setAttribute('aria-disabled',String(!info.supported));
+  }
+  if(!info.supported && els.welcome && !els.welcome.classList.contains('hidden')){
+    els.prompt.placeholder='פתח אתר רגיל כדי להשתמש בכלי העמוד, או כתוב שאלה רגילה...';
+  }else if(els.prompt){
+    els.prompt.placeholder='כתוב ל-Gemini Nano...';
+  }
+}
+
 function originPattern(url){
   try{
     const u=new URL(url);
@@ -299,8 +337,7 @@ async function ensurePagePermission(tab){
 }
 
 async function extractPage(selectionOnly=false){
-  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
-  if(!tab?.id||!/^https?:/i.test(tab.url||''))throw new Error('לא ניתן לקרוא את העמוד הזה.');
+  const tab=await getActiveTabForPageTools();
   await ensurePagePermission(tab);
   const [{result}]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:(onlySelection)=>{const selected=window.getSelection()?.toString().trim()||'';if(onlySelection)return{selection:true,title:document.title,url:location.href,text:selected};
     const clone=document.body.cloneNode(true);clone.querySelectorAll('script,style,noscript,svg,canvas,nav,footer,form,aside').forEach(n=>n.remove());const text=(clone.innerText||'').replace(/\n{3,}/g,'\n\n').trim();return{selection:false,title:document.title,url:location.href,text}},args:[selectionOnly]});
@@ -690,7 +727,7 @@ document.addEventListener('keydown',e=>{
 els.stopBtn.onclick=()=>abortController?.abort();els.newChat.onclick=createNewChat;els.chatSearch.oninput=renderChatList;els.folderFilter.onchange=renderChatList;els.sidebarToggle.onclick=()=>els.sidebar.classList.toggle('collapsed');
 els.attachPage.onclick=()=>attachPage(false);els.selectionBtn.onclick=()=>attachPage(true);els.clearContext.onclick=()=>{pageContext=null;renderContext()};els.livePage.onchange=()=>{if(pageContext)pageContext.live=els.livePage.checked};els.fileBtn.onclick=()=>els.fileInput.click();els.fileInput.onchange=async()=>{await readFiles([...els.fileInput.files]);els.fileInput.value=''};els.screenBtn.onclick=captureScreen;els.exportBtn.onclick=exportChat;els.prepareAiBtn.onclick=prepareLocalAI;els.paletteBtn.onclick=openPalette;els.paletteSearch.oninput=renderPalette;
 els.chatTitle.addEventListener('change',async()=>{const c=activeChat();if(!c)return;c.title=els.chatTitle.value.trim()||'שיחה חדשה';c.updatedAt=now();renderChatList();await persist()});
-els.pageToolsBtn.addEventListener('click',e=>{e.stopPropagation();els.toolsMenu.classList.toggle('hidden')});document.addEventListener('click',()=>els.toolsMenu.classList.add('hidden'));els.toolsMenu.addEventListener('click',e=>e.stopPropagation());document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>runPageTool(b.dataset.tool));
+els.pageToolsBtn.addEventListener('click',e=>{e.stopPropagation();els.toolsMenu.classList.toggle('hidden')});document.addEventListener('click',()=>els.toolsMenu.classList.add('hidden'));els.toolsMenu.addEventListener('click',e=>e.stopPropagation());document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{if(b.disabled){toast(b.title||'כלי העמוד אינם זמינים בעמוד הזה','error');return}runPageTool(b.dataset.tool)});
 els.settingsBtn.onclick=()=>els.settingsDialog.showModal();els.temperature.oninput=()=>els.temperatureValue.textContent=els.temperature.value;els.topK.oninput=()=>els.topKValue.textContent=els.topK.value;
 els.saveSettings.addEventListener('click',async e=>{e.preventDefault();settings={profile:els.profile.value,responseStyle:els.responseStyle.value,answerLanguage:els.answerLanguage.value,temperature:Number(els.temperature.value),topK:Number(els.topK.value),systemPrompt:els.systemPrompt.value.trim()||DEFAULT_SETTINGS.systemPrompt,autoTitle:els.autoTitle.checked,smartContext:els.smartContext.checked,qualityTuned:true};resetSession();await persist();els.settingsDialog.close();setStatus('הגדרות נשמרו','ok');toast('ההגדרות נשמרו','success')});
 els.attachMenuBtn.onclick=e=>{e.stopPropagation();els.moreMenu.classList.add('hidden');els.attachMenu.classList.toggle('hidden')};
@@ -703,6 +740,8 @@ els.copyLanguageDebug.onclick=async()=>{await navigator.clipboard.writeText(lang
 els.moreExportBtn.onclick=()=>{els.moreMenu.classList.add('hidden');exportChat()};
 els.moreSettingsBtn.onclick=()=>{els.moreMenu.classList.add('hidden');els.settingsDialog.showModal()};
 els.diagnosticsBtn.onclick=openDiagnostics;els.closeDiagnostics.onclick=()=>els.diagnosticsDialog.close();els.refreshDiagnostics.onclick=renderDiagnostics;els.runSelfTest.onclick=runSelfTest;
+chrome.tabs.onActivated?.addListener(()=>refreshPageToolAvailability());
+chrome.tabs.onUpdated?.addListener((tabId,changeInfo,tab)=>{if(changeInfo.status==='complete'||changeInfo.url)refreshPageToolAvailability()});
 chrome.storage.onChanged.addListener(async(changes,area)=>{if(area!=='local')return;if(changes.nanoPendingPrompt?.newValue?.text){const p=changes.nanoPendingPrompt.newValue;await chrome.storage.local.remove('nanoPendingPrompt');els.prompt.value=p.text;autoResize();updateCounter();if(p.autoSend)await sendPrompt(p.text)}if(changes.nanoCommand?.newValue?.type==='new-chat'){await chrome.storage.local.remove('nanoCommand');await createNewChat()}});
 
-(async()=>{await loadState();await checkAvailability();await consumePending();els.prompt.focus()})();
+(async()=>{await loadState();await checkAvailability();await refreshPageToolAvailability();await consumePending();els.prompt.focus()})();
