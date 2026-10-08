@@ -14,9 +14,9 @@ const DEFAULT_SETTINGS = {
   profile:'general',
   responseStyle:'balanced',
   answerLanguage:'auto',
-  temperature:0.8,
-  topK:8,
-  systemPrompt:'You are a helpful, accurate local assistant running inside Google Chrome. Be clear, practical, and do not invent facts.',
+  temperature:0.5,
+  topK:6,
+  systemPrompt:'You are a helpful, accurate local assistant running inside Google Chrome. Be clear, practical, and do not invent facts. Match the exact scope requested by the user. If the user asks for one sentence, return one sentence only. Never append unrelated alternatives, duplicated text, or text in another language.',
   autoTitle:true,
   smartContext:true
 };
@@ -141,28 +141,55 @@ async function getTranslator(from,to){
   if((a==='downloadable'||a==='downloading')&&!navigator.userActivation.isActive){els.setupBox.classList.remove('hidden');throw new Error('חבילת התרגום עדיין לא מוכנה. לחץ "הכן AI מקומי".')}
   const t=await Translator.create(translatorOptions(from,to));if(from==='he'&&to==='en')translatorHeEn=t;if(from==='en'&&to==='he')translatorEnHe=t;return t
 }
+function splitTranslationText(text,maxChars=3000){
+  const paragraphs=(text||'').split(/\n{2,}/);
+  const chunks=[];
+  let current='';
+  for(const p of paragraphs){
+    const candidate=current ? current+'\n\n'+p : p;
+    if(candidate.length<=maxChars){current=candidate;continue}
+    if(current)chunks.push(current);
+    if(p.length<=maxChars){current=p;continue}
+    for(let i=0;i<p.length;i+=maxChars)chunks.push(p.slice(i,i+maxChars));
+    current='';
+  }
+  if(current)chunks.push(current);
+  return chunks.filter(Boolean);
+}
+
 async function translateText(text,from,to,onChunk){
   const t=await getTranslator(from,to);
-  if(t.translateStreaming){
-    let out='';
-    for await(const chunk of t.translateStreaming(text)){
-      out += chunk;
-      onChunk?.(out);
-    }
-    return out;
+  const chunks=splitTranslationText(text,3000);
+  let out='';
+  for(let i=0;i<chunks.length;i++){
+    const translated=await t.translate(chunks[i]);
+    out += (out ? '\n\n' : '') + translated;
+    onChunk?.(out);
   }
-  const out=await t.translate(text);onChunk?.(out);return out
+  return out;
 }
 
 function languageModelOptions(multimodal=false){
   const options={expectedInputs:[{type:'text',languages:['en']}],expectedOutputs:[{type:'text',languages:['en']}]};
   if(multimodal)options.expectedInputs.push({type:'image'});return options
 }
+function healthyModelText(message){
+  const text=(message?.modelText||'').trim();
+  if(!text)return false;
+  if(message.role==='assistant'){
+    if(text.length<3 || /^[\s\p{P}\p{S}]+$/u.test(text))return false;
+    const hebrew=(text.match(/[\u0590-\u05FF]/g)||[]).length;
+    if(hebrew > Math.max(4,text.length*0.08))return false;
+    if(/(.)\1{7,}/u.test(text))return false;
+  }
+  return true;
+}
+
 async function makeInitialPrompts(chat){
   const prompts=[{role:'system',content:systemInstruction()}];
-  const recent=chat.messages.slice(-10);
+  const recent=chat.messages.slice(-12);
   for(const m of recent){
-    if(!m.modelText)continue;
+    if(!healthyModelText(m))continue;
     prompts.push({role:m.role==='assistant'?'assistant':'user',content:m.modelText.slice(0,7000)})
   }
   return prompts
@@ -321,7 +348,13 @@ function openPalette(){els.paletteSearch.value='';renderPalette();els.paletteDia
 function renderPalette(){const q=els.paletteSearch.value.trim().toLowerCase();els.paletteList.innerHTML='';for(const [name,fn] of COMMANDS.filter(([n])=>n.toLowerCase().includes(q))){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{els.paletteDialog.close();fn()};els.paletteList.append(b)}}
 
 async function loadState(){
-  const data=await chrome.storage.local.get(['nanoChats','nanoActiveChatId','nanoSettings']);chats=Array.isArray(data.nanoChats)?data.nanoChats:[];settings={...DEFAULT_SETTINGS,...(data.nanoSettings||{})};if(!chats.length)chats=[newChatData()];activeChatId=chats.some(c=>c.id===data.nanoActiveChatId)?data.nanoActiveChatId:chats[0].id;
+  const data=await chrome.storage.local.get(['nanoChats','nanoActiveChatId','nanoSettings']);chats=Array.isArray(data.nanoChats)?data.nanoChats:[];settings={...DEFAULT_SETTINGS,...(data.nanoSettings||{})};
+  if(!data.nanoSettings?.qualityTuned){
+    settings.temperature=Math.min(Number(settings.temperature)||0.5,0.5);
+    settings.topK=Math.min(Number(settings.topK)||6,6);
+    settings.qualityTuned=true;
+  }
+  if(!chats.length)chats=[newChatData()];activeChatId=chats.some(c=>c.id===data.nanoActiveChatId)?data.nanoActiveChatId:chats[0].id;
   for(const c of chats){c.pinned=!!c.pinned;c.folder=c.folder||'';c.messages=c.messages||[]}
   els.profile.value=settings.profile;els.responseStyle.value=settings.responseStyle;els.answerLanguage.value=settings.answerLanguage;els.temperature.value=settings.temperature;els.temperatureValue.textContent=settings.temperature;els.topK.value=settings.topK;els.topKValue.textContent=settings.topK;els.systemPrompt.value=settings.systemPrompt;els.autoTitle.checked=settings.autoTitle;els.smartContext.checked=settings.smartContext;renderAll();await persist()
 }
@@ -335,7 +368,7 @@ els.attachPage.onclick=()=>attachPage(false);els.selectionBtn.onclick=()=>attach
 els.chatTitle.addEventListener('change',async()=>{const c=activeChat();if(!c)return;c.title=els.chatTitle.value.trim()||'שיחה חדשה';c.updatedAt=now();renderChatList();await persist()});
 els.pageToolsBtn.addEventListener('click',e=>{e.stopPropagation();els.toolsMenu.classList.toggle('hidden')});document.addEventListener('click',()=>els.toolsMenu.classList.add('hidden'));els.toolsMenu.addEventListener('click',e=>e.stopPropagation());document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>runPageTool(b.dataset.tool));
 els.settingsBtn.onclick=()=>els.settingsDialog.showModal();els.temperature.oninput=()=>els.temperatureValue.textContent=els.temperature.value;els.topK.oninput=()=>els.topKValue.textContent=els.topK.value;
-els.saveSettings.addEventListener('click',async e=>{e.preventDefault();settings={profile:els.profile.value,responseStyle:els.responseStyle.value,answerLanguage:els.answerLanguage.value,temperature:Number(els.temperature.value),topK:Number(els.topK.value),systemPrompt:els.systemPrompt.value.trim()||DEFAULT_SETTINGS.systemPrompt,autoTitle:els.autoTitle.checked,smartContext:els.smartContext.checked};resetSession();await persist();els.settingsDialog.close();setStatus('הגדרות נשמרו','ok')});
+els.saveSettings.addEventListener('click',async e=>{e.preventDefault();settings={profile:els.profile.value,responseStyle:els.responseStyle.value,answerLanguage:els.answerLanguage.value,temperature:Number(els.temperature.value),topK:Number(els.topK.value),systemPrompt:els.systemPrompt.value.trim()||DEFAULT_SETTINGS.systemPrompt,autoTitle:els.autoTitle.checked,smartContext:els.smartContext.checked,qualityTuned:true};resetSession();await persist();els.settingsDialog.close();setStatus('הגדרות נשמרו','ok')});
 els.diagnosticsBtn.onclick=openDiagnostics;els.closeDiagnostics.onclick=()=>els.diagnosticsDialog.close();els.refreshDiagnostics.onclick=renderDiagnostics;els.runSelfTest.onclick=runSelfTest;
 chrome.storage.onChanged.addListener(async(changes,area)=>{if(area!=='local')return;if(changes.nanoPendingPrompt?.newValue?.text){const p=changes.nanoPendingPrompt.newValue;await chrome.storage.local.remove('nanoPendingPrompt');els.prompt.value=p.text;autoResize();updateCounter();if(p.autoSend)await sendPrompt(p.text)}if(changes.nanoCommand?.newValue?.type==='new-chat'){await chrome.storage.local.remove('nanoCommand');await createNewChat()}});
 
