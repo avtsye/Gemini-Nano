@@ -144,7 +144,12 @@ async function getTranslator(from,to){
 async function translateText(text,from,to,onChunk){
   const t=await getTranslator(from,to);
   if(t.translateStreaming){
-    let out='';for await(const chunk of t.translateStreaming(text)){out=chunk;onChunk?.(out)}return out
+    let out='';
+    for await(const chunk of t.translateStreaming(text)){
+      out += chunk;
+      onChunk?.(out);
+    }
+    return out;
   }
   const out=await t.translate(text);onChunk?.(out);return out
 }
@@ -229,7 +234,12 @@ function buildMultimodalPrompt(modelText){
   return[{role:'user',content:[{type:'text',value:modelText},...images.map(a=>({type:'image',value:a.blob}))]}]
 }
 function updateContextMeter(){
-  if(modelSession&&typeof modelSession.inputUsage==='number'&&typeof modelSession.inputQuota==='number'){const pct=Math.round(modelSession.inputUsage/modelSession.inputQuota*100);els.contextMeter.textContent='Context: '+pct+'%';els.contextMeter.classList.toggle('warn',pct>78);return}
+  if(modelSession&&typeof modelSession.contextUsage==='number'&&typeof modelSession.contextWindow==='number'){
+    const pct=Math.round(modelSession.contextUsage/modelSession.contextWindow*100);
+    els.contextMeter.textContent='Context: '+pct+'%';
+    els.contextMeter.classList.toggle('warn',pct>78);
+    return;
+  }
   const c=activeChat();const chars=(c?.messages||[]).reduce((n,m)=>n+(m.modelText||m.text||'').length,0)+(pageContext?.text?.length||0);els.contextMeter.textContent='Context: ~'+Math.round(chars/4000)+'k';els.contextMeter.classList.toggle('warn',chars>30000)
 }
 async function recoverSession(multimodal=false){const c=activeChat();if(c?.messages.length>10)c.messages=c.messages.slice(-10);resetSession();return ensureSession(multimodal)}
@@ -253,7 +263,15 @@ async function generateAnswer(userText,{replaceIndex=null,internalPrompt=null}={
     setStatus('חושב...','warn');
     let english='';const payload=buildMultimodalPrompt(normalized.modelText);
     const stream=model.promptStreaming(payload,{signal:abortController.signal});
-    for await(const chunk of stream){english=chunk;placeholder.modelText=english;if(!normalized.wantsHebrew){placeholder.text=english;if(bubble)bubble.textContent=english;updateContextMeter()}}
+    for await(const chunk of stream){
+      english += chunk;
+      placeholder.modelText=english;
+      if(!normalized.wantsHebrew){
+        placeholder.text=english;
+        if(bubble)bubble.textContent=english;
+        updateContextMeter();
+      }
+    }
     if(normalized.wantsHebrew){setStatus('מתרגם תשובה...','warn');placeholder.text=await translateText(english,'en','he',out=>{if(bubble)bubble.textContent=out})}else placeholder.text=english;
     bubble?.classList.remove('typing');setStatus('מוכן • מקומי','ok');pendingAttachments=[];renderAttachments();updateContextMeter()
   }catch(e){
