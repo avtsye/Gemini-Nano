@@ -236,7 +236,11 @@ function healthyModelText(message){
 async function makeInitialPrompts(chat){
   const prompts=[{role:'system',content:systemInstruction()}];
   const recent=chat.messages.slice(-12);
+  const last=recent[recent.length-1];
   for(const m of recent){
+    // The newest user turn is sent immediately with promptStreaming(); including it
+    // here would duplicate the request and attached PAGE CONTEXT.
+    if(m===last && m.role==='user')continue;
     if(!healthyModelText(m))continue;
     prompts.push({role:m.role==='assistant'?'assistant':'user',content:m.modelText.slice(0,7000)})
   }
@@ -394,10 +398,10 @@ async function captureScreen(){
   try{const dataUrl=await chrome.tabs.captureVisibleTab();const blob=await(await fetch(dataUrl)).blob();pendingAttachments.push({id:uid(),kind:'image',name:'צילום מסך',blob});renderAttachments()}
   catch(e){showNotice('לא ניתן לצלם את הטאב: '+(e.message||e))}
 }
-function buildTextContext(userText){
+function buildTextContext(normalizedCommand,queryForRelevance){
   const blocks=[];
   if(pageContext){
-    const pageText=relevantContext(pageContext.text,userText);
+    const pageText=relevantContext(pageContext.text,queryForRelevance||normalizedCommand);
     blocks.push(
       'BEGIN PAGE CONTEXT\n'+
       'Title: '+(pageContext.title||'(untitled)')+'\n'+
@@ -407,9 +411,15 @@ function buildTextContext(userText){
     );
   }
   for(const a of pendingAttachments.filter(x=>x.kind==='text')){
-    blocks.push('BEGIN FILE: '+a.name+'\n'+relevantContext(a.text,userText)+'\nEND FILE');
+    blocks.push(
+      'BEGIN FILE: '+a.name+'\n'+
+      relevantContext(a.text,queryForRelevance||normalizedCommand)+'\n'+
+      'END FILE'
+    );
   }
-  return blocks.length?userText+'\n\n'+blocks.join('\n\n---\n\n'):userText
+  return blocks.length
+    ? normalizedCommand+'\n\nIMPORTANT: Use the supplied context below as source material. Do not ask the user to paste it again.\n\n'+blocks.join('\n\n---\n\n')
+    : normalizedCommand
 }
 async function getIntentNormalizer(){
   if(intentNormalizerSession)return intentNormalizerSession;
@@ -619,11 +629,26 @@ async function generateAnswer(userText,{replaceIndex=null,internalPrompt=null,fo
     if(replaceIndex===null){c.messages.push({role:'user',text:displayUser,modelText:null,at:now()});c.updatedAt=now();if(settings.autoTitle&&c.messages.length===1&&c.title==='שיחה חדשה')c.title=displayUser.replace(/\s+/g,' ').slice(0,42)||'שיחה חדשה'}
     els.prompt.value='';autoResize();updateCounter();renderAll();
 
-    const fullInput=buildTextContext(internalPrompt||userText);
-    const normalized=await normalizeInput(fullInput,userText);
+    const commandText=internalPrompt||userText;
+    const normalized=await normalizeInput(commandText,userText);
     if(forceLanguage==='he')normalized.wantsHebrew=true;
     if(forceLanguage==='en')normalized.wantsHebrew=false;
+    normalized.modelText=buildTextContext(normalized.modelText,userText);
     const images=pendingAttachments.some(x=>x.kind==='image');
+
+    if(pageContext){
+      lastLanguageDebug={
+        ...(lastLanguageDebug||{}),
+        pageContextSent:{
+          title:pageContext.title||'',
+          url:pageContext.url||'',
+          chars:pageContext.text?.length||0,
+          preview:relevantContext(pageContext.text,userText,2200)
+        },
+        finalModelPromptPreview:normalized.modelText.slice(0,6000),
+        at:Date.now()
+      };
+    }
     const userMsg=replaceIndex===null?c.messages[c.messages.length-1]:null;if(userMsg)userMsg.modelText=normalized.modelText;
     let placeholder;
     if(replaceIndex!==null){placeholder=c.messages[replaceIndex];placeholder.text='';placeholder.modelText=''}
@@ -725,7 +750,10 @@ function renderLanguageDebug(){
     ['הטקסט המקורי',lastLanguageDebug.original],
     ['תרגום ישיר',lastLanguageDebug.direct],
     ...((lastLanguageDebug.evidence||[]).map(e=>['תרגום '+e.label,e.translated])),
-    ['בקשה מנורמלת למודל',lastLanguageDebug.normalized]
+    ['בקשת משתמש מנורמלת',lastLanguageDebug.normalized],
+    ['PAGE CONTEXT URL',lastLanguageDebug.pageContextSent?.url||'—'],
+    ['PAGE CONTEXT שנשלח ('+(lastLanguageDebug.pageContextSent?.chars||0)+' תווים מקוריים)',lastLanguageDebug.pageContextSent?.preview||'—'],
+    ['תחילת הפרומפט הסופי למודל',lastLanguageDebug.finalModelPromptPreview||'—']
   ];
   for(const [title,value] of steps){
     const box=document.createElement('div');box.className='debug-step';
@@ -737,10 +765,13 @@ function renderLanguageDebug(){
 function languageDebugText(){
   if(!lastLanguageDebug)return '';
   return [
-    'ORIGINAL:\n'+lastLanguageDebug.original,
-    'DIRECT:\n'+lastLanguageDebug.direct,
+    'ORIGINAL:\n'+(lastLanguageDebug.original||''),
+    'DIRECT:\n'+(lastLanguageDebug.direct||''),
     ...((lastLanguageDebug.evidence||[]).map(e=>e.label.toUpperCase()+':\n'+e.translated)),
-    'NORMALIZED:\n'+lastLanguageDebug.normalized
+    'NORMALIZED USER REQUEST:\n'+(lastLanguageDebug.normalized||''),
+    'PAGE URL:\n'+(lastLanguageDebug.pageContextSent?.url||''),
+    'PAGE CONTEXT PREVIEW:\n'+(lastLanguageDebug.pageContextSent?.preview||''),
+    'FINAL MODEL PROMPT PREVIEW:\n'+(lastLanguageDebug.finalModelPromptPreview||'')
   ].join('\n\n---\n\n');
 }
 function autoResize(){els.prompt.style.height='auto';els.prompt.style.height=Math.min(150,els.prompt.scrollHeight)+'px'}
