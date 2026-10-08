@@ -53,8 +53,9 @@
             <span id="contextMeter" class="context-meter">Context: —</span>
           </div>
         </div>
-        <button id="paletteBtn" class="tool-btn" title="פקודות">⌘K</button>
-        <button id="pageToolsBtn" class="tool-btn" title="כלי עמוד">✨ עמוד</button>
+        <button id="paletteBtn" class="icon-btn top-action" title="פקודות (Ctrl+K)" aria-label="פקודות">⌘</button>
+        <button id="pageToolsBtn" class="icon-btn top-action" title="כלי עמוד" aria-label="כלי עמוד">✦</button>
+        <button id="moreBtn" class="icon-btn top-action" title="אפשרויות נוספות" aria-label="אפשרויות נוספות">⋯</button>
       </header>
 
       <section id="downloadBox" class="download hidden">
@@ -75,13 +76,14 @@
       <section id="welcome" class="welcome">
         <div class="hero-icon">N</div>
         <h1>ה-AI המקומי שלך</h1>
-        <p>צ'אט, עמודים, טקסט מסומן, קבצים ותמונות — מתוך Chrome ובמחשב שלך.</p>
+        <p>עוזר מקומי שמבין את השיחה, העמוד והקבצים שלך — בלי API key.</p>
         <div class="quick-grid">
-          <button data-tool="summarize-page">סכם את העמוד</button>
-          <button data-tool="explain-page">הסבר את העמוד</button>
-          <button data-tool="key-points">חלץ נקודות מפתח</button>
-          <button data-tool="ask-page">שאל על העמוד</button>
+          <button data-tool="summarize-page"><span>✦</span><b>סכם עמוד</b><small>קבל תקציר קצר וברור</small></button>
+          <button data-tool="explain-page"><span>◎</span><b>הסבר</b><small>פשט טקסט מורכב</small></button>
+          <button data-tool="key-points"><span>≡</span><b>נקודות מפתח</b><small>חלץ את העיקר</small></button>
+          <button data-tool="ask-page"><span>?</span><b>שאל על העמוד</b><small>שיחה עם התוכן הנוכחי</small></button>
         </div>
+        <div class="welcome-hint">Enter לשליחה · Shift+Enter לשורה חדשה · Ctrl+K לפקודות</div>
       </section>
 
       <section id="messages" class="messages" aria-live="polite"></section>
@@ -98,10 +100,8 @@
         <textarea id="prompt" rows="1" placeholder="כתוב ל-Gemini Nano..." autocomplete="off"></textarea>
         <div class="composer-bar">
           <div class="left-actions">
-            <button id="attachPage" type="button" class="mini-btn" title="צרף את תוכן העמוד">⊕ עמוד</button>
-            <button id="selectionBtn" type="button" class="mini-btn" title="קרא טקסט מסומן">◩ מסומן</button>
-            <button id="fileBtn" type="button" class="mini-btn" title="צרף קובץ">📎 קובץ</button>
-            <button id="screenBtn" type="button" class="mini-btn" title="צרף צילום מסך">▣ מסך</button>
+            <button id="attachMenuBtn" type="button" class="circle-btn" title="הוסף הקשר או קובץ" aria-label="הוסף">＋</button>
+            <span id="composerHint" class="composer-hint">מקומי • פרטי</span>
           </div>
           <div class="right-actions">
             <span id="counter" class="counter">0</span>
@@ -116,6 +116,21 @@
     </main>
   </div>
 
+  <div id="attachMenu" class="menu attach-menu hidden">
+    <button id="attachPage" type="button"><span>▤</span> צרף את העמוד</button>
+    <button id="selectionBtn" type="button"><span>◩</span> טקסט מסומן</button>
+    <button id="fileBtn" type="button"><span>📎</span> קובץ מקומי</button>
+    <button id="screenBtn" type="button"><span>▣</span> צילום מסך</button>
+  </div>
+
+  <div id="moreMenu" class="menu more-menu hidden">
+    <button id="debugLanguageBtn" type="button">⌁ אבחון שפה</button>
+    <button id="moreExportBtn" type="button">⇩ ייצוא שיחה</button>
+    <button id="moreSettingsBtn" type="button">⚙ הגדרות</button>
+  </div>
+
+  <div id="toastHost" class="toast-host" aria-live="polite"></div>
+
   <div id="toolsMenu" class="menu hidden">
     <button data-tool="summarize-page">סכם עמוד</button>
     <button data-tool="key-points">נקודות מפתח</button>
@@ -128,6 +143,22 @@
     <div class="palette-card">
       <input id="paletteSearch" type="search" placeholder="חפש פקודה...">
       <div id="paletteList" class="palette-list"></div>
+    </div>
+  </dialog>
+
+  <dialog id="languageDebugDialog">
+    <div class="settings-card">
+      <div class="dialog-head">
+        <div>
+          <h2>אבחון שכבת השפה</h2>
+          <p>כך הבקשה עברה מעברית אל המודל המקומי.</p>
+        </div>
+        <button id="closeLanguageDebug" class="icon-btn">×</button>
+      </div>
+      <div id="languageDebugContent" class="debug-pipeline"></div>
+      <div class="dialog-actions">
+        <button id="copyLanguageDebug" class="secondary-action">העתק אבחון</button>
+      </div>
     </div>
   </dialog>
 
@@ -158,6 +189,7 @@
         <button value="cancel" class="icon-btn">×</button>
       </div>
 
+      <div class="settings-section-title">התנהגות</div>
       <label>
         <span>פרופיל עוזר</span>
         <select id="profile">
@@ -186,6 +218,7 @@
         </select>
       </label>
 
+      <div class="settings-section-title">מתקדם</div>
       <label>
         <span>Temperature <b id="temperatureValue">0.8</b></span>
         <input id="temperature" type="range" min="0" max="2" step="0.1" value="0.8">
