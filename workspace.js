@@ -58,6 +58,7 @@ let modelSessionChatId = null;
 let modelSessionMultimodal = false;
 let translatorHeEn = null;
 let translatorEnHe = null;
+let intentNormalizerSession = null;
 let busy = false;
 let abortController = null;
 let pageContext = null;
@@ -76,7 +77,14 @@ function formatTime(ts){const d=new Date(ts),today=new Date();return d.toDateStr
 async function persist(){await chrome.storage.local.set({nanoChats:chats,nanoActiveChatId:activeChatId,nanoSettings:settings})}
 function newChatData(){return{id:uid(),title:'שיחה חדשה',createdAt:now(),updatedAt:now(),messages:[],pinned:false,folder:''}}
 
-function resetSession(){try{modelSession?.destroy?.()}catch{} modelSession=null;modelSessionChatId=null;modelSessionMultimodal=false}
+function resetSession(){
+  try{modelSession?.destroy?.()}catch{}
+  try{intentNormalizerSession?.destroy?.()}catch{}
+  modelSession=null;
+  modelSessionChatId=null;
+  modelSessionMultimodal=false;
+  intentNormalizerSession=null;
+}
 async function createNewChat(){resetSession();const c=newChatData();chats.unshift(c);activeChatId=c.id;pageContext=null;pendingAttachments=[];renderAll();await persist();els.prompt.focus()}
 
 function renderChatList(){
@@ -251,36 +259,76 @@ function buildTextContext(userText){
   for(const a of pendingAttachments.filter(x=>x.kind==='text'))blocks.push('FILE: '+a.name+'\n'+relevantContext(a.text,userText));
   return blocks.length?userText+'\n\n'+blocks.join('\n\n---\n\n'):userText
 }
-function hebrewIntentGuard(originalText, translatedText){
-  const original=(originalText||'').trim();
-  const guards=[];
+async function getIntentNormalizer(){
+  if(intentNormalizerSession)return intentNormalizerSession;
+  if(!('LanguageModel' in self))return null;
 
-  if(/משפט\s+בדיקה/.test(original) && /תקינות/.test(original)){
-    guards.push('The user wants one simple example sentence to verify that the chat/output works correctly. They are NOT asking for a sentence that checks factual correctness or validation criteria.');
-  }
-  if(/משפט\s+(אחד|בודד)/.test(original) || /במשפט\s+אחד/.test(original)){
-    guards.push('Return exactly one sentence.');
-  }
-  if(/בקצרה|קצר(?:ה|צר)?/.test(original)){
-    guards.push('Keep the answer very short.');
-  }
-  if(/רק\s+/.test(original)){
-    guards.push('Follow the requested output-only constraint; do not add alternatives, commentary, or explanation.');
-  }
+  const options=languageModelOptions(false);
+  const availability=await LanguageModel.availability(options);
+  if(availability!=='available')return null;
 
-  if(!guards.length)return translatedText;
-  return 'IMPORTANT INTENT NOTES FROM THE ORIGINAL HEBREW:\n- '+guards.join('\n- ')+'\n\nAUTOMATIC ENGLISH TRANSLATION:\n'+translatedText;
+  const createOptions={
+    ...options,
+    initialPrompts:[{
+      role:'system',
+      content:[
+        'You normalize machine-translated user requests before another assistant answers them.',
+        'Rewrite the supplied English translation into natural, unambiguous English that preserves the user\'s likely intent.',
+        'Preserve the requested action, requested amount or length, output format, constraints, negations, tone, and whether the user is asking for content versus asking to evaluate something.',
+        'Do not answer the request. Do not add new requirements. Do not explain your work.',
+        'Return only the normalized request.'
+      ].join(' ')
+    }]
+  };
+
+  try{
+    const params=await LanguageModel.params?.();
+    if(params){
+      createOptions.temperature=Math.min(0.2,params.maxTemperature??0.2);
+      createOptions.topK=Math.min(4,params.maxTopK??4);
+    }
+  }catch{}
+
+  intentNormalizerSession=await LanguageModel.create(createOptions);
+  return intentNormalizerSession;
+}
+
+async function normalizeTranslatedIntent(machineTranslation){
+  const clean=(machineTranslation||'').trim();
+  if(!clean)return clean;
+
+  try{
+    const normalizer=await getIntentNormalizer();
+    if(!normalizer)return clean;
+
+    const normalized=(await normalizer.prompt(
+      'Machine-translated user request:\n\n'+clean+'\n\nRewrite only the request, preserving its intended meaning and constraints.'
+    )).trim();
+
+    if(!normalized || normalized.length>Math.max(12000,clean.length*2.5))return clean;
+    return normalized;
+  }catch(error){
+    console.warn('Intent normalization fallback:',error);
+    return clean;
+  }
 }
 
 async function normalizeInput(text,userQuestion){
   const wantsHebrew=settings.answerLanguage==='he'||(settings.answerLanguage==='auto'&&containsHebrew(userQuestion));
   let modelText=text;
+
   if(containsHebrew(text)){
     setStatus('מתרגם קלט...','warn');
-    modelText=await translateText(text,'he','en');
-    modelText=hebrewIntentGuard(userQuestion,modelText);
+    const machineTranslation=await translateText(text,'he','en');
+
+    setStatus('משמר כוונה...','warn');
+    modelText=await normalizeTranslatedIntent(machineTranslation);
   }
-  return{modelText:modelText+(wantsHebrew?'\nAnswer in English first; the app will translate the final answer to Hebrew.':'\nAnswer in English.'),wantsHebrew}
+
+  return{
+    modelText:modelText+(wantsHebrew?'\nAnswer in English first; the app will translate the final answer to Hebrew.':'\nAnswer in English.'),
+    wantsHebrew
+  };
 }
 function buildMultimodalPrompt(modelText){
   const images=pendingAttachments.filter(x=>x.kind==='image');if(!images.length)return modelText;
