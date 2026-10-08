@@ -290,6 +290,7 @@ function pageAccessInfo(url){
 async function getActiveTabForPageTools(){
   const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
   if(!tab?.id)throw new Error('לא נמצא טאב פעיל.');
+  if(!tab.url)throw new Error('Chrome לא החזיר את כתובת הטאב הפעיל. בדוק שהתוסף נטען מחדש לאחר עדכון ההרשאות.');
   const info=pageAccessInfo(tab.url);
   if(!info.supported)throw new Error(info.reason);
   return tab;
@@ -297,7 +298,7 @@ async function getActiveTabForPageTools(){
 
 async function refreshPageToolAvailability(){
   const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
-  const info=pageAccessInfo(tab?.url);
+  const info=tab?.url ? pageAccessInfo(tab.url) : {supported:true,reason:''};
   const buttons=[...document.querySelectorAll('[data-tool]')];
   for(const button of buttons){
     button.disabled=!info.supported;
@@ -339,9 +340,16 @@ async function ensurePagePermission(tab){
 async function extractPage(selectionOnly=false){
   const tab=await getActiveTabForPageTools();
   await ensurePagePermission(tab);
-  const [{result}]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:(onlySelection)=>{const selected=window.getSelection()?.toString().trim()||'';if(onlySelection)return{selection:true,title:document.title,url:location.href,text:selected};
+  let injection;
+  try{
+    injection=await chrome.scripting.executeScript({target:{tabId:tab.id},func:(onlySelection)=>{const selected=window.getSelection()?.toString().trim()||'';if(onlySelection)return{selection:true,title:document.title,url:location.href,text:selected};
     const clone=document.body.cloneNode(true);clone.querySelectorAll('script,style,noscript,svg,canvas,nav,footer,form,aside').forEach(n=>n.remove());const text=(clone.innerText||'').replace(/\n{3,}/g,'\n\n').trim();return{selection:false,title:document.title,url:location.href,text}},args:[selectionOnly]});
-  if(!result?.text)throw new Error(selectionOnly?'לא נמצא טקסט מסומן.':'לא נמצא טקסט קריא בעמוד.');return result
+  }catch(error){
+    throw new Error('Chrome מנע קריאת תוכן מהטאב: '+(error?.message||error));
+  }
+  const result=injection?.[0]?.result;
+  if(!result?.text)throw new Error(selectionOnly?'לא נמצא טקסט מסומן.':'לא נמצא טקסט קריא בעמוד.');
+  return result
 }
 async function attachPage(selectionOnly=false){
   hideNotice();setStatus('קורא עמוד...','warn');
