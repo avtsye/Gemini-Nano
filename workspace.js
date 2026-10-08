@@ -7,7 +7,8 @@ const els = Object.fromEntries([
   'answerLanguage','temperature','temperatureValue','topK','topKValue','systemPrompt','autoTitle','smartContext',
   'saveSettings','downloadBox','downloadProgress','downloadPercent','setupBox','setupDetail','prepareAiBtn',
   'diagnosticsDialog','diagnosticsContent','closeDiagnostics','refreshDiagnostics','runSelfTest','paletteDialog',
-  'paletteSearch','paletteList'
+  'paletteSearch','paletteList','attachMenuBtn','attachMenu','moreBtn','moreMenu','debugLanguageBtn','languageDebugDialog',
+  'languageDebugContent','closeLanguageDebug','copyLanguageDebug','moreExportBtn','moreSettingsBtn','toastHost','composerHint'
 ].map(id => [id, $('#'+id)]));
 
 const DEFAULT_SETTINGS = {
@@ -64,6 +65,7 @@ let abortController = null;
 let pageContext = null;
 let pendingAttachments = [];
 let modelAvailability = 'unknown';
+let lastLanguageDebug = null;
 
 function uid(){return crypto.randomUUID?.() || Date.now().toString(36)+Math.random().toString(36).slice(2)}
 function now(){return Date.now()}
@@ -73,6 +75,14 @@ function normalizeWords(t){return (t||'').toLowerCase().match(/[\p{L}\p{N}]{2,}/
 function setStatus(t,type=''){els.status.textContent=t;els.status.className='status'+(type?' '+type:'')}
 function showNotice(t){els.notice.textContent=t;els.notice.classList.remove('hidden')}
 function hideNotice(){els.notice.classList.add('hidden')}
+function toast(message,type=''){
+  if(!els.toastHost)return;
+  const node=document.createElement('div');
+  node.className='toast'+(type?' '+type:'');
+  node.textContent=message;
+  els.toastHost.appendChild(node);
+  setTimeout(()=>node.remove(),3200);
+}
 function formatTime(ts){const d=new Date(ts),today=new Date();return d.toDateString()===today.toDateString()?d.toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString('he-IL',{day:'2-digit',month:'2-digit'})}
 async function persist(){await chrome.storage.local.set({nanoChats:chats,nanoActiveChatId:activeChatId,nanoSettings:settings})}
 function newChatData(){return{id:uid(),title:'שיחה חדשה',createdAt:now(),updatedAt:now(),messages:[],pinned:false,folder:''}}
@@ -87,22 +97,38 @@ function resetSession(){
 }
 async function createNewChat(){resetSession();const c=newChatData();chats.unshift(c);activeChatId=c.id;pageContext=null;pendingAttachments=[];renderAll();await persist();els.prompt.focus()}
 
+function chatTimeGroup(ts){
+  const d=new Date(ts), nowDate=new Date();
+  const today=new Date(nowDate.getFullYear(),nowDate.getMonth(),nowDate.getDate());
+  const target=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+  const diff=Math.round((today-target)/86400000);
+  if(diff===0)return 'היום';
+  if(diff===1)return 'אתמול';
+  if(diff<7)return 'השבוע';
+  return 'ישן יותר';
+}
 function renderChatList(){
   const q=els.chatSearch.value.trim().toLowerCase(), folder=els.folderFilter.value;
   els.chatList.innerHTML='';
   const filtered=chats.filter(c=>(!q||c.title.toLowerCase().includes(q)||c.messages.some(m=>(m.text||'').toLowerCase().includes(q)))&&(!folder||(folder==='מועדפים'?c.pinned:c.folder===folder)));
   filtered.sort((a,b)=>(b.pinned-a.pinned)||(b.updatedAt-a.updatedAt));
+  let lastGroup='';
   for(const chat of filtered){
+    const group=chat.pinned?'מועדפים':chatTimeGroup(chat.updatedAt);
+    if(group!==lastGroup){
+      const label=document.createElement('div');label.className='chat-group-label';label.textContent=group;els.chatList.appendChild(label);lastGroup=group;
+    }
     const wrap=document.createElement('div');wrap.className='chat-item-wrap'+(chat.id===activeChatId?' active':'');
     const btn=document.createElement('button');btn.className='chat-item';
-    const title=document.createElement('strong');title.textContent=(chat.pinned?'★ ':'')+chat.title;
+    const title=document.createElement('strong');title.textContent=chat.title;
     const meta=document.createElement('small');meta.textContent=formatTime(chat.updatedAt)+' • '+chat.messages.length+' הודעות'+(chat.folder?' • '+chat.folder:'');
-    btn.append(title,meta);btn.addEventListener('click',async()=>{activeChatId=chat.id;pageContext=null;pendingAttachments=[];resetSession();renderAll();await persist()});
+    btn.append(title,meta);btn.addEventListener('click',async()=>{activeChatId=chat.id;pageContext=null;pendingAttachments=[];resetSession();renderAll();await persist();if(innerWidth<520)els.sidebar.classList.add('collapsed')});
     const acts=document.createElement('div');acts.className='chat-actions';
     const star=document.createElement('button');star.textContent=chat.pinned?'★':'☆';star.title='מועדף';star.addEventListener('click',async e=>{e.stopPropagation();chat.pinned=!chat.pinned;renderChatList();await persist()});
-    const del=document.createElement('button');del.textContent='×';del.title='מחק שיחה';del.addEventListener('click',async e=>{e.stopPropagation();chats=chats.filter(c=>c.id!==chat.id);if(!chats.length)chats=[newChatData()];if(activeChatId===chat.id)activeChatId=chats[0].id;resetSession();renderAll();await persist()});
+    const del=document.createElement('button');del.textContent='×';del.title='מחק שיחה';del.addEventListener('click',async e=>{e.stopPropagation();chats=chats.filter(c=>c.id!==chat.id);if(!chats.length)chats=[newChatData()];if(activeChatId===chat.id)activeChatId=chats[0].id;resetSession();renderAll();await persist();toast('השיחה נמחקה')});
     acts.append(star,del);wrap.append(btn,acts);els.chatList.appendChild(wrap);
   }
+  if(!filtered.length){const empty=document.createElement('div');empty.className='chat-group-label';empty.textContent='לא נמצאו שיחות';els.chatList.appendChild(empty)}
 }
 
 function addMessageActions(actions,message,index){
@@ -116,10 +142,24 @@ function addMessageActions(actions,message,index){
   }
   const del=document.createElement('button');del.textContent='מחק';del.onclick=async()=>{const c=activeChat();c.messages.splice(index,1);c.updatedAt=now();resetSession();renderMessages();renderChatList();await persist()};actions.append(del);
 }
+function escapeHtml(text){return (text||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function renderMarkdown(text){
+  let s=escapeHtml(text||'');
+  s=s.replace(/```([\s\S]*?)```/g,(_,code)=>'<pre><code>'+code.trim()+'</code></pre>');
+  s=s.replace(/`([^`]+)`/g,'<code>$1</code>');
+  s=s.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  s=s.replace(/^> (.+)$/gm,'<blockquote>$1</blockquote>');
+  s=s.replace(/^[-*] (.+)$/gm,'<li>$1</li>');
+  s=s.replace(/(?:<li>.*<\/li>\n?)+/g,m=>'<ul>'+m+'</ul>');
+  s=s.replace(/^\d+\. (.+)$/gm,'<li>$1</li>');
+  s=s.replace(/(?:<li>.*<\/li>\n?)+/g,m=>m.startsWith('<ul>')?m:'<ol>'+m+'</ol>');
+  s=s.replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>');
+  return '<p>'+s+'</p>';
+}
 function messageNode(message,index){
   const row=document.createElement('div');row.className='message '+message.role;
   const wrap=document.createElement('div');wrap.className='message-wrap';
-  const bubble=document.createElement('div');bubble.className='bubble';bubble.textContent=message.text||'';
+  const bubble=document.createElement('div');bubble.className='bubble';bubble.innerHTML=renderMarkdown(message.text||'');
   const actions=document.createElement('div');actions.className='message-actions';addMessageActions(actions,message,index);
   wrap.append(bubble,actions);row.append(wrap);return{row,bubble}
 }
@@ -221,7 +261,7 @@ async function prepareLocalAI(){
   try{
     const pModel=LanguageModel.create({...languageModelOptions(false),initialPrompts:[{role:'system',content:systemInstruction()}],monitor(m){m.addEventListener('downloadprogress',e=>{const p=Math.round(e.loaded*100);els.downloadProgress.value=p;els.downloadPercent.textContent=p+'%';setStatus('מוריד Gemini Nano '+p+'%','warn')})}});
     const p1='Translator'in self?Translator.create(translatorOptions('he','en')):Promise.resolve(null),p2='Translator'in self?Translator.create(translatorOptions('en','he')):Promise.resolve(null);
-    const [model,t1,t2]=await Promise.all([pModel,p1,p2]);resetSession();modelSession=model;modelSessionChatId=activeChatId;translatorHeEn=t1;translatorEnHe=t2;els.setupBox.classList.add('hidden');els.downloadBox.classList.add('hidden');setStatus('מוכן • מקומי','ok');showNotice('ה-AI המקומי מוכן.');setTimeout(hideNotice,1800)
+    const [model,t1,t2]=await Promise.all([pModel,p1,p2]);resetSession();modelSession=model;modelSessionChatId=activeChatId;translatorHeEn=t1;translatorEnHe=t2;els.setupBox.classList.add('hidden');els.downloadBox.classList.add('hidden');setStatus('מוכן • מקומי','ok');toast('ה-AI המקומי מוכן','success');setTimeout(hideNotice,1800)
   }catch(e){setStatus('הכנה נכשלה','error');showNotice('הכנת ה-AI נכשלה: '+(e.message||e))}
   finally{els.prepareAiBtn.disabled=false}
 }
@@ -428,7 +468,15 @@ async function normalizeInput(text,userQuestion){
     const machineTranslation=await translateText(text,'he','en');
 
     setStatus('משמר כוונה...','warn');
+    const evidence=await buildIntentEvidence(userQuestion);
     modelText=await normalizeTranslatedIntent(machineTranslation,userQuestion);
+    lastLanguageDebug={
+      original:userQuestion,
+      direct:machineTranslation,
+      evidence,
+      normalized:modelText,
+      at:Date.now()
+    };
   }
 
   return{
@@ -464,7 +512,7 @@ async function generateAnswer(userText,{replaceIndex=null,internalPrompt=null}={
     let placeholder;
     if(replaceIndex!==null){placeholder=c.messages[replaceIndex];placeholder.text='';placeholder.modelText=''}
     else{placeholder={role:'assistant',text:'',modelText:'',at:now()};c.messages.push(placeholder);replaceIndex=c.messages.length-1}
-    renderMessages();const bubble=els.messages.lastElementChild?.querySelector('.bubble');bubble?.classList.add('typing');
+    renderMessages();const bubble=els.messages.lastElementChild?.querySelector('.bubble');if(bubble){bubble.classList.add('typing');bubble.innerHTML='<span class="typing-dots"><i></i><i></i><i></i></span>'}
 
     let model;try{model=await ensureSession(images)}catch(e){throw e}
     setStatus('חושב...','warn');
@@ -475,11 +523,11 @@ async function generateAnswer(userText,{replaceIndex=null,internalPrompt=null}={
       placeholder.modelText=english;
       if(!normalized.wantsHebrew){
         placeholder.text=english;
-        if(bubble)bubble.textContent=english;
+        if(bubble)bubble.innerHTML=renderMarkdown(english);
         updateContextMeter();
       }
     }
-    if(normalized.wantsHebrew){setStatus('מתרגם תשובה...','warn');placeholder.text=await translateText(english,'en','he',out=>{if(bubble)bubble.textContent=out})}else placeholder.text=english;
+    if(normalized.wantsHebrew){setStatus('מתרגם תשובה...','warn');placeholder.text=await translateText(english,'en','he',out=>{if(bubble)bubble.innerHTML=renderMarkdown(out)})}else placeholder.text=english;
     bubble?.classList.remove('typing');setStatus('מוכן • מקומי','ok');pendingAttachments=[];renderAttachments();updateContextMeter()
   }catch(e){
     if(e?.name==='AbortError'){setStatus('הופסק','warn')}
@@ -521,6 +569,34 @@ async function runSelfTest(){
   els.runSelfTest.disabled=true;try{setStatus('בדיקת קצה-לקצה...','warn');const model=await ensureSession(false);const input=await translateText('בדיקה מקומית קצרה','he','en');const out=await model.prompt(input+' Reply only with: LOCAL_OK');const he=await translateText(out,'en','he');showNotice('בדיקה הצליחה: '+he);setStatus('בדיקה עברה','ok')}catch(e){showNotice('בדיקה נכשלה: '+(e.message||e));setStatus('בדיקה נכשלה','error')}finally{els.runSelfTest.disabled=false}
 }
 
+function renderLanguageDebug(){
+  if(!els.languageDebugContent)return;
+  els.languageDebugContent.innerHTML='';
+  if(!lastLanguageDebug){
+    const empty=document.createElement('div');empty.className='diag-help';empty.textContent='עדיין אין אבחון. שלח הודעה בעברית ואז פתח שוב.';els.languageDebugContent.appendChild(empty);return;
+  }
+  const steps=[
+    ['הטקסט המקורי',lastLanguageDebug.original],
+    ['תרגום ישיר',lastLanguageDebug.direct],
+    ...((lastLanguageDebug.evidence||[]).map(e=>['תרגום '+e.label,e.translated])),
+    ['בקשה מנורמלת למודל',lastLanguageDebug.normalized]
+  ];
+  for(const [title,value] of steps){
+    const box=document.createElement('div');box.className='debug-step';
+    const h=document.createElement('strong');h.textContent=title;
+    const pre=document.createElement('pre');pre.textContent=value||'—';
+    box.append(h,pre);els.languageDebugContent.appendChild(box);
+  }
+}
+function languageDebugText(){
+  if(!lastLanguageDebug)return '';
+  return [
+    'ORIGINAL:\n'+lastLanguageDebug.original,
+    'DIRECT:\n'+lastLanguageDebug.direct,
+    ...((lastLanguageDebug.evidence||[]).map(e=>e.label.toUpperCase()+':\n'+e.translated)),
+    'NORMALIZED:\n'+lastLanguageDebug.normalized
+  ].join('\n\n---\n\n');
+}
 function autoResize(){els.prompt.style.height='auto';els.prompt.style.height=Math.min(150,els.prompt.scrollHeight)+'px'}
 function updateCounter(){els.counter.textContent=els.prompt.value.length.toLocaleString('he-IL')}
 async function exportChat(){const c=activeChat();if(!c)return;const lines=['# '+c.title,'','נוצר באמצעות Gemini Nano Local Workspace',''];for(const m of c.messages)lines.push(m.role==='user'?'## אתה':'## Gemini Nano','',m.text,'');const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=(c.title||'gemini-nano-chat').replace(/[\\/:*?"<>|]/g,'-')+'.md';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
@@ -542,13 +618,26 @@ async function consumePending(){const {nanoPendingPrompt,nanoCommand}=await chro
 
 els.composer.addEventListener('submit',e=>{e.preventDefault();sendPrompt(els.prompt.value)});
 els.prompt.addEventListener('input',()=>{autoResize();updateCounter()});els.prompt.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();els.composer.requestSubmit()}});
-document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openPalette()}});
+document.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openPalette();return}
+  if(e.key==='Escape'){els.attachMenu?.classList.add('hidden');els.moreMenu?.classList.add('hidden');els.toolsMenu?.classList.add('hidden')}
+  if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){e.preventDefault();els.prompt.focus()}
+});
 els.stopBtn.onclick=()=>abortController?.abort();els.newChat.onclick=createNewChat;els.chatSearch.oninput=renderChatList;els.folderFilter.onchange=renderChatList;els.sidebarToggle.onclick=()=>els.sidebar.classList.toggle('collapsed');
 els.attachPage.onclick=()=>attachPage(false);els.selectionBtn.onclick=()=>attachPage(true);els.clearContext.onclick=()=>{pageContext=null;renderContext()};els.livePage.onchange=()=>{if(pageContext)pageContext.live=els.livePage.checked};els.fileBtn.onclick=()=>els.fileInput.click();els.fileInput.onchange=async()=>{await readFiles([...els.fileInput.files]);els.fileInput.value=''};els.screenBtn.onclick=captureScreen;els.exportBtn.onclick=exportChat;els.prepareAiBtn.onclick=prepareLocalAI;els.paletteBtn.onclick=openPalette;els.paletteSearch.oninput=renderPalette;
 els.chatTitle.addEventListener('change',async()=>{const c=activeChat();if(!c)return;c.title=els.chatTitle.value.trim()||'שיחה חדשה';c.updatedAt=now();renderChatList();await persist()});
 els.pageToolsBtn.addEventListener('click',e=>{e.stopPropagation();els.toolsMenu.classList.toggle('hidden')});document.addEventListener('click',()=>els.toolsMenu.classList.add('hidden'));els.toolsMenu.addEventListener('click',e=>e.stopPropagation());document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>runPageTool(b.dataset.tool));
 els.settingsBtn.onclick=()=>els.settingsDialog.showModal();els.temperature.oninput=()=>els.temperatureValue.textContent=els.temperature.value;els.topK.oninput=()=>els.topKValue.textContent=els.topK.value;
-els.saveSettings.addEventListener('click',async e=>{e.preventDefault();settings={profile:els.profile.value,responseStyle:els.responseStyle.value,answerLanguage:els.answerLanguage.value,temperature:Number(els.temperature.value),topK:Number(els.topK.value),systemPrompt:els.systemPrompt.value.trim()||DEFAULT_SETTINGS.systemPrompt,autoTitle:els.autoTitle.checked,smartContext:els.smartContext.checked,qualityTuned:true};resetSession();await persist();els.settingsDialog.close();setStatus('הגדרות נשמרו','ok')});
+els.saveSettings.addEventListener('click',async e=>{e.preventDefault();settings={profile:els.profile.value,responseStyle:els.responseStyle.value,answerLanguage:els.answerLanguage.value,temperature:Number(els.temperature.value),topK:Number(els.topK.value),systemPrompt:els.systemPrompt.value.trim()||DEFAULT_SETTINGS.systemPrompt,autoTitle:els.autoTitle.checked,smartContext:els.smartContext.checked,qualityTuned:true};resetSession();await persist();els.settingsDialog.close();setStatus('הגדרות נשמרו','ok');toast('ההגדרות נשמרו','success')});
+els.attachMenuBtn.onclick=e=>{e.stopPropagation();els.moreMenu.classList.add('hidden');els.attachMenu.classList.toggle('hidden')};
+els.moreBtn.onclick=e=>{e.stopPropagation();els.attachMenu.classList.add('hidden');els.moreMenu.classList.toggle('hidden')};
+document.addEventListener('click',()=>{els.attachMenu?.classList.add('hidden');els.moreMenu?.classList.add('hidden')});
+els.attachMenu?.addEventListener('click',e=>e.stopPropagation());els.moreMenu?.addEventListener('click',e=>e.stopPropagation());
+els.debugLanguageBtn.onclick=()=>{renderLanguageDebug();els.languageDebugDialog.showModal();els.moreMenu.classList.add('hidden')};
+els.closeLanguageDebug.onclick=()=>els.languageDebugDialog.close();
+els.copyLanguageDebug.onclick=async()=>{await navigator.clipboard.writeText(languageDebugText());toast('האבחון הועתק','success')};
+els.moreExportBtn.onclick=()=>{els.moreMenu.classList.add('hidden');exportChat()};
+els.moreSettingsBtn.onclick=()=>{els.moreMenu.classList.add('hidden');els.settingsDialog.showModal()};
 els.diagnosticsBtn.onclick=openDiagnostics;els.closeDiagnostics.onclick=()=>els.diagnosticsDialog.close();els.refreshDiagnostics.onclick=renderDiagnostics;els.runSelfTest.onclick=runSelfTest;
 chrome.storage.onChanged.addListener(async(changes,area)=>{if(area!=='local')return;if(changes.nanoPendingPrompt?.newValue?.text){const p=changes.nanoPendingPrompt.newValue;await chrome.storage.local.remove('nanoPendingPrompt');els.prompt.value=p.text;autoResize();updateCounter();if(p.autoSend)await sendPrompt(p.text)}if(changes.nanoCommand?.newValue?.type==='new-chat'){await chrome.storage.local.remove('nanoCommand');await createNewChat()}});
 
