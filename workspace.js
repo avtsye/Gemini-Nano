@@ -293,7 +293,55 @@ async function getIntentNormalizer(){
   return intentNormalizerSession;
 }
 
-async function normalizeTranslatedIntent(machineTranslation){
+function hebrewPhraseWindows(text){
+  const words=(text||'').trim().split(/\s+/).filter(Boolean);
+  const windows=[];
+  if(words.length<=1)return windows;
+
+  const maxWindow=words.length<=8 ? 3 : 4;
+  for(let size=2;size<=maxWindow;size++){
+    for(let i=0;i+size<=words.length;i++){
+      windows.push(words.slice(i,i+size).join(' '));
+      if(windows.length>=10)return windows;
+    }
+  }
+  return windows;
+}
+
+async function buildIntentEvidence(originalHebrew){
+  const clean=(originalHebrew||'').trim();
+  if(!clean || !containsHebrew(clean))return [];
+
+  const evidence=[];
+  const seen=new Set();
+
+  const add=async(label,source)=>{
+    const key=source.trim();
+    if(!key || seen.has(key))return;
+    seen.add(key);
+    try{
+      const translated=(await translateText(key,'he','en')).trim();
+      if(translated)evidence.push({label,source:key,translated});
+    }catch(error){
+      console.warn('Intent evidence translation failed:',label,error);
+    }
+  };
+
+  await add('full-request',clean);
+
+  const clauseParts=clean
+    .split(/[,.!?;:\n]+|\s+(?:אבל|אך|וגם|ואז|כדי|בשביל|רק)\s+/)
+    .map(x=>x.trim())
+    .filter(x=>x.length>=2);
+
+  for(const part of clauseParts.slice(0,5))await add('clause',part);
+
+  for(const phrase of hebrewPhraseWindows(clean).slice(0,10))await add('phrase',phrase);
+
+  return evidence;
+}
+
+async function normalizeTranslatedIntent(machineTranslation,originalHebrew){
   const clean=(machineTranslation||'').trim();
   if(!clean)return clean;
 
@@ -301,8 +349,25 @@ async function normalizeTranslatedIntent(machineTranslation){
     const normalizer=await getIntentNormalizer();
     if(!normalizer)return clean;
 
+    const evidence=await buildIntentEvidence(originalHebrew);
+    const evidenceText=evidence.length
+      ? evidence.map((e,i)=>`View ${i+1} [${e.label}]: ${e.translated}`).join('\n')
+      : '(no extra views available)';
+
     const normalized=(await normalizer.prompt(
-      'Machine-translated user request:\n\n'+clean+'\n\nRewrite only the request, preserving its intended meaning and constraints.'
+      [
+        'A Hebrew user request was machine-translated to English. The full translation may contain lexical ambiguity.',
+        'Infer the most likely intended user request from ALL translation views below.',
+        'Prefer an interpretation that is semantically consistent across the full request and the shorter phrase/clause views.',
+        'Preserve requested action, quantity, length, format, constraints, negation, and tone.',
+        'Do not answer the request. Do not explain your reasoning. Return only one normalized English request.',
+        '',
+        'FULL MACHINE TRANSLATION:',
+        clean,
+        '',
+        'ADDITIONAL TRANSLATION VIEWS:',
+        evidenceText
+      ].join('\n')
     )).trim();
 
     if(!normalized || normalized.length>Math.max(12000,clean.length*2.5))return clean;
@@ -322,7 +387,7 @@ async function normalizeInput(text,userQuestion){
     const machineTranslation=await translateText(text,'he','en');
 
     setStatus('משמר כוונה...','warn');
-    modelText=await normalizeTranslatedIntent(machineTranslation);
+    modelText=await normalizeTranslatedIntent(machineTranslation,userQuestion);
   }
 
   return{
