@@ -308,6 +308,38 @@ function hebrewPhraseWindows(text){
   return windows;
 }
 
+async function pivotTranslateToEnglish(text,pivotLanguage){
+  if(!('Translator' in self))return null;
+
+  const firstPair={sourceLanguage:'he',targetLanguage:pivotLanguage};
+  const secondPair={sourceLanguage:pivotLanguage,targetLanguage:'en'};
+
+  try{
+    const [a1,a2]=await Promise.all([
+      Translator.availability(firstPair),
+      Translator.availability(secondPair)
+    ]);
+
+    if(a1==='unavailable' || a2==='unavailable')return null;
+
+    // Do not trigger surprise downloads from background normalization.
+    if(a1!=='available' || a2!=='available')return null;
+
+    const t1=await Translator.create(firstPair);
+    const t2=await Translator.create(secondPair);
+    try{
+      const pivot=await t1.translate(text);
+      return (await t2.translate(pivot)).trim();
+    }finally{
+      t1.destroy?.();
+      t2.destroy?.();
+    }
+  }catch(error){
+    console.warn('Pivot translation failed:',pivotLanguage,error);
+    return null;
+  }
+}
+
 async function buildIntentEvidence(originalHebrew){
   const clean=(originalHebrew||'').trim();
   if(!clean || !containsHebrew(clean))return [];
@@ -315,10 +347,10 @@ async function buildIntentEvidence(originalHebrew){
   const evidence=[];
   const seen=new Set();
 
-  const add=async(label,source)=>{
+  const addDirect=async(label,source)=>{
     const key=source.trim();
-    if(!key || seen.has(key))return;
-    seen.add(key);
+    if(!key || seen.has('direct:'+key))return;
+    seen.add('direct:'+key);
     try{
       const translated=(await translateText(key,'he','en')).trim();
       if(translated)evidence.push({label,source:key,translated});
@@ -327,16 +359,24 @@ async function buildIntentEvidence(originalHebrew){
     }
   };
 
-  await add('full-request',clean);
+  await addDirect('full-direct',clean);
+
+  // Independent semantic views through languages the Prompt API understands well.
+  for(const pivot of ['de','es','fr']){
+    const translated=await pivotTranslateToEnglish(clean,pivot);
+    if(translated && !seen.has('pivot:'+translated)){
+      seen.add('pivot:'+translated);
+      evidence.push({label:'full-via-'+pivot,source:clean,translated});
+    }
+  }
 
   const clauseParts=clean
     .split(/[,.!?;:\n]+|\s+(?:אבל|אך|וגם|ואז|כדי|בשביל|רק)\s+/)
     .map(x=>x.trim())
     .filter(x=>x.length>=2);
 
-  for(const part of clauseParts.slice(0,5))await add('clause',part);
-
-  for(const phrase of hebrewPhraseWindows(clean).slice(0,10))await add('phrase',phrase);
+  for(const part of clauseParts.slice(0,4))await addDirect('clause',part);
+  for(const phrase of hebrewPhraseWindows(clean).slice(0,6))await addDirect('phrase',phrase);
 
   return evidence;
 }
@@ -356,9 +396,10 @@ async function normalizeTranslatedIntent(machineTranslation,originalHebrew){
 
     const normalized=(await normalizer.prompt(
       [
-        'A Hebrew user request was machine-translated to English. The full translation may contain lexical ambiguity.',
+        'A Hebrew user request was translated into English through several independent routes. Any one route may contain lexical ambiguity or a misleading word choice.',
         'Infer the most likely intended user request from ALL translation views below.',
-        'Prefer an interpretation that is semantically consistent across the full request and the shorter phrase/clause views.',
+        'Treat agreement across independent full-request routes as stronger evidence than a single ambiguous wording.',
+        'Use shorter phrase/clause views only to resolve ambiguity, not to invent a new task.',
         'Preserve requested action, quantity, length, format, constraints, negation, and tone.',
         'Do not answer the request. Do not explain your reasoning. Return only one normalized English request.',
         '',
