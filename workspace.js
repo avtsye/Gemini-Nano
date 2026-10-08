@@ -30,10 +30,10 @@ const PROFILE_PROMPTS = {
 };
 
 const TOOL_PROMPTS = {
-  'summarize-page':'Summarize the attached page clearly. Preserve important facts and structure.',
-  'key-points':'Extract the most important key points from the attached page as a concise structured list.',
-  'explain-page':'Explain the attached page in simple, clear language. Clarify difficult terms when needed.',
-  'translate-page':'Translate the important content of the attached page into Hebrew, preserving meaning and structure.',
+  'summarize-page':'The page content is already attached below as PAGE CONTEXT. Do not ask for a URL and do not claim that you need to access the web. Summarize only the supplied PAGE CONTEXT clearly, preserving the important facts and structure.',
+  'key-points':'The page content is already attached below as PAGE CONTEXT. Do not ask for a URL. Extract the most important key points only from the supplied PAGE CONTEXT as a concise structured list.',
+  'explain-page':'The page content is already attached below as PAGE CONTEXT. Do not ask for a URL. Explain the supplied PAGE CONTEXT in simple, clear language and clarify difficult terms when useful.',
+  'translate-page':'The page content is already attached below as PAGE CONTEXT. Translate the important supplied content into Hebrew while preserving meaning and structure.',
   'ask-page':''
 };
 
@@ -270,7 +270,21 @@ function splitChunks(text,size=3200,overlap=280){const out=[];let i=0;while(i<te
 function scoreChunk(chunk,query){const q=new Set(normalizeWords(query));if(!q.size)return 0;const words=normalizeWords(chunk);let score=0;for(const w of words)if(q.has(w))score++;return score/Math.sqrt(Math.max(1,words.length))}
 function relevantContext(text,query,maxChars=9000){
   if(!settings.smartContext||text.length<=maxChars)return text.slice(0,maxChars);
-  const chunks=splitChunks(text,2600,220).map((t,i)=>({t,i,s:scoreChunk(t,query)}));chunks.sort((a,b)=>b.s-a.s||a.i-b.i);
+
+  const chunks=splitChunks(text,2600,220).map((t,i)=>({t,i,s:scoreChunk(t,query)}));
+  const maxScore=Math.max(0,...chunks.map(x=>x.s));
+
+  // Generic page actions such as "summarize" often have no lexical overlap with the page.
+  // In that case, sample the page across its length instead of returning only the first navigation-heavy chunks.
+  if(maxScore===0){
+    const picks=[0,Math.floor((chunks.length-1)/3),Math.floor((chunks.length-1)*2/3),chunks.length-1]
+      .filter((v,i,a)=>v>=0&&a.indexOf(v)===i)
+      .map(i=>chunks[i])
+      .filter(Boolean);
+    return picks.map(x=>x.t).join('\n\n[…קטע נוסף…]\n\n').slice(0,maxChars);
+  }
+
+  chunks.sort((a,b)=>b.s-a.s||a.i-b.i);
   return chunks.slice(0,4).sort((a,b)=>a.i-b.i).map(x=>x.t).join('\n\n[…קטע נוסף…]\n\n').slice(0,maxChars)
 }
 function pageAccessInfo(url){
@@ -382,8 +396,19 @@ async function captureScreen(){
 }
 function buildTextContext(userText){
   const blocks=[];
-  if(pageContext){blocks.push('PAGE CONTEXT\nTitle: '+pageContext.title+'\nURL: '+pageContext.url+'\nContent:\n'+relevantContext(pageContext.text,userText))}
-  for(const a of pendingAttachments.filter(x=>x.kind==='text'))blocks.push('FILE: '+a.name+'\n'+relevantContext(a.text,userText));
+  if(pageContext){
+    const pageText=relevantContext(pageContext.text,userText);
+    blocks.push(
+      'BEGIN PAGE CONTEXT\n'+
+      'Title: '+(pageContext.title||'(untitled)')+'\n'+
+      'URL: '+(pageContext.url||'(unknown)')+'\n'+
+      'Content:\n'+pageText+'\n'+
+      'END PAGE CONTEXT'
+    );
+  }
+  for(const a of pendingAttachments.filter(x=>x.kind==='text')){
+    blocks.push('BEGIN FILE: '+a.name+'\n'+relevantContext(a.text,userText)+'\nEND FILE');
+  }
   return blocks.length?userText+'\n\n'+blocks.join('\n\n---\n\n'):userText
 }
 async function getIntentNormalizer(){
@@ -586,7 +611,7 @@ function updateContextMeter(){
 }
 async function recoverSession(multimodal=false){const c=activeChat();if(c?.messages.length>10)c.messages=c.messages.slice(-10);resetSession();return ensureSession(multimodal)}
 
-async function generateAnswer(userText,{replaceIndex=null,internalPrompt=null}={}){
+async function generateAnswer(userText,{replaceIndex=null,internalPrompt=null,forceLanguage=null}={}){
   if(busy)return;const c=activeChat();if(!c)return;hideNotice();busy=true;abortController=new AbortController();els.sendBtn.disabled=true;els.stopBtn.classList.remove('hidden');
   try{
     await refreshLivePage();
@@ -594,7 +619,11 @@ async function generateAnswer(userText,{replaceIndex=null,internalPrompt=null}={
     if(replaceIndex===null){c.messages.push({role:'user',text:displayUser,modelText:null,at:now()});c.updatedAt=now();if(settings.autoTitle&&c.messages.length===1&&c.title==='שיחה חדשה')c.title=displayUser.replace(/\s+/g,' ').slice(0,42)||'שיחה חדשה'}
     els.prompt.value='';autoResize();updateCounter();renderAll();
 
-    const fullInput=buildTextContext(internalPrompt||userText), normalized=await normalizeInput(fullInput,userText), images=pendingAttachments.some(x=>x.kind==='image');
+    const fullInput=buildTextContext(internalPrompt||userText);
+    const normalized=await normalizeInput(fullInput,userText);
+    if(forceLanguage==='he')normalized.wantsHebrew=true;
+    if(forceLanguage==='en')normalized.wantsHebrew=false;
+    const images=pendingAttachments.some(x=>x.kind==='image');
     const userMsg=replaceIndex===null?c.messages[c.messages.length-1]:null;if(userMsg)userMsg.modelText=normalized.modelText;
     let placeholder;
     if(replaceIndex!==null){placeholder=c.messages[replaceIndex];placeholder.text='';placeholder.modelText=''}
@@ -618,7 +647,7 @@ async function generateAnswer(userText,{replaceIndex=null,internalPrompt=null}={
     bubble?.classList.remove('typing');setStatus('מוכן • מקומי','ok');pendingAttachments=[];renderAttachments();updateContextMeter()
   }catch(e){
     if(e?.name==='AbortError'){setStatus('הופסק','warn')}
-    else if(/context|quota|overflow/i.test(e?.message||'')){showNotice('חלון ההקשר התמלא. אני מצמצם את ההיסטוריה ומנסה שוב.');try{await recoverSession(pendingAttachments.some(x=>x.kind==='image'));busy=false;els.sendBtn.disabled=false;els.stopBtn.classList.add('hidden');return generateAnswer(userText,{replaceIndex,internalPrompt})}catch(e2){showNotice('שחזור נכשל: '+(e2.message||e2))}}
+    else if(/context|quota|overflow/i.test(e?.message||'')){showNotice('חלון ההקשר התמלא. אני מצמצם את ההיסטוריה ומנסה שוב.');try{await recoverSession(pendingAttachments.some(x=>x.kind==='image'));busy=false;els.sendBtn.disabled=false;els.stopBtn.classList.add('hidden');return generateAnswer(userText,{replaceIndex,internalPrompt,forceLanguage})}catch(e2){showNotice('שחזור נכשל: '+(e2.message||e2))}}
     else{setStatus('שגיאה','error');showNotice(e?.message||String(e))}
   }finally{const c2=activeChat();if(c2)c2.updatedAt=now();busy=false;abortController=null;els.sendBtn.disabled=false;els.stopBtn.classList.add('hidden');renderAll();await persist();els.prompt.focus()}
 }
@@ -651,15 +680,23 @@ async function runPageTool(tool){
     return;
   }
 
-  let prompt=TOOL_PROMPTS[tool]||'Analyze the attached page.';
+  const displayPrompts={
+    'summarize-page':'סכם את העמוד',
+    'key-points':'חלץ נקודות מפתח מהעמוד',
+    'explain-page':'הסבר את העמוד',
+    'translate-page':'תרגם את תוכן העמוד לעברית'
+  };
+  const displayPrompt=displayPrompts[tool]||'נתח את העמוד';
+  let prompt=TOOL_PROMPTS[tool]||'Analyze the supplied PAGE CONTEXT.';
+
   if(tool==='summarize-page'){
     const hierarchical=await hierarchicalSummary(pageContext.text);
     if(hierarchical){
-      await generateAnswer('סכם את העמוד',{internalPrompt:hierarchical});
-      return;
+      prompt='The supplied PAGE CONTEXT has already been summarized in sections. Create one coherent summary from these supplied section summaries. Do not ask for a URL.\n\n'+hierarchical;
     }
   }
-  await generateAnswer(prompt);
+
+  await generateAnswer(displayPrompt,{internalPrompt:prompt,forceLanguage:'he'});
 }
 
 async function checkAvailability(){
