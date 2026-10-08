@@ -273,13 +273,55 @@ function relevantContext(text,query,maxChars=9000){
   const chunks=splitChunks(text,2600,220).map((t,i)=>({t,i,s:scoreChunk(t,query)}));chunks.sort((a,b)=>b.s-a.s||a.i-b.i);
   return chunks.slice(0,4).sort((a,b)=>a.i-b.i).map(x=>x.t).join('\n\n[…קטע נוסף…]\n\n').slice(0,maxChars)
 }
+function originPattern(url){
+  try{
+    const u=new URL(url);
+    if(!/^https?:$/.test(u.protocol))return null;
+    return u.origin+'/*';
+  }catch{return null}
+}
+
+async function ensurePagePermission(tab){
+  const pattern=originPattern(tab?.url||'');
+  if(!pattern)throw new Error('כלי העמוד זמינים רק בדפי http/https רגילים.');
+
+  const has=await chrome.permissions.contains({origins:[pattern]});
+  if(has)return true;
+
+  if(!navigator.userActivation.isActive){
+    throw new Error('נדרשת הרשאה לאתר הנוכחי. לחץ שוב על כלי העמוד כדי לאשר גישה.');
+  }
+
+  const granted=await chrome.permissions.request({origins:[pattern]});
+  if(!granted)throw new Error('לא אושרה גישה לאתר הנוכחי.');
+  toast('הגישה לאתר אושרה','success');
+  return true;
+}
+
 async function extractPage(selectionOnly=false){
-  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});if(!tab?.id||!/^https?:/i.test(tab.url||''))throw new Error('לא ניתן לקרוא את העמוד הזה.');
+  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+  if(!tab?.id||!/^https?:/i.test(tab.url||''))throw new Error('לא ניתן לקרוא את העמוד הזה.');
+  await ensurePagePermission(tab);
   const [{result}]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:(onlySelection)=>{const selected=window.getSelection()?.toString().trim()||'';if(onlySelection)return{selection:true,title:document.title,url:location.href,text:selected};
     const clone=document.body.cloneNode(true);clone.querySelectorAll('script,style,noscript,svg,canvas,nav,footer,form,aside').forEach(n=>n.remove());const text=(clone.innerText||'').replace(/\n{3,}/g,'\n\n').trim();return{selection:false,title:document.title,url:location.href,text}},args:[selectionOnly]});
   if(!result?.text)throw new Error(selectionOnly?'לא נמצא טקסט מסומן.':'לא נמצא טקסט קריא בעמוד.');return result
 }
-async function attachPage(selectionOnly=false){hideNotice();setStatus('קורא עמוד...','warn');try{const oldLive=pageContext?.live||false;pageContext=await extractPage(selectionOnly);pageContext.live=oldLive&&!selectionOnly;renderContext();setStatus('מוכן • מקומי','ok')}catch(e){setStatus('שגיאה','error');showNotice(e.message)}}
+async function attachPage(selectionOnly=false){
+  hideNotice();setStatus('קורא עמוד...','warn');
+  try{
+    const oldLive=pageContext?.live||false;
+    pageContext=await extractPage(selectionOnly);
+    pageContext.live=oldLive&&!selectionOnly;
+    renderContext();
+    setStatus('מוכן • מקומי','ok');
+  }catch(e){
+    pageContext=null;
+    renderContext();
+    setStatus('שגיאה','error');
+    showNotice(e.message);
+    toast(e.message||'שגיאה בקריאת העמוד','error');
+  }
+}
 async function refreshLivePage(){if(pageContext?.live&&!pageContext.selection){const live=true;pageContext=await extractPage(false);pageContext.live=live;renderContext()}}
 
 async function readFiles(files){
@@ -546,11 +588,33 @@ async function hierarchicalSummary(text){
   return 'Create one coherent summary from these section summaries. Remove duplication and preserve important facts:\n\n'+parts.join('\n\n---\n\n')
 }
 async function runPageTool(tool){
-  els.toolsMenu.classList.add('hidden');await attachPage(false);if(!pageContext)return;
-  if(tool==='ask-page'){els.prompt.placeholder='שאל משהו על העמוד המצורף...';els.prompt.focus();return}
+  els.toolsMenu.classList.add('hidden');
+  const previousStatus=els.status.textContent;
+  setStatus('פותח כלי עמוד...','warn');
+
+  await attachPage(false);
+  if(!pageContext){
+    setStatus(previousStatus||'מוכן','error');
+    toast('לא הצלחתי לקרוא את העמוד. בדוק את ההודעה למעלה או את הרשאת האתר.','error');
+    return;
+  }
+
+  if(tool==='ask-page'){
+    setStatus('העמוד מצורף','ok');
+    els.prompt.placeholder='שאל משהו על העמוד המצורף...';
+    els.prompt.focus();
+    return;
+  }
+
   let prompt=TOOL_PROMPTS[tool]||'Analyze the attached page.';
-  if(tool==='summarize-page'){const hierarchical=await hierarchicalSummary(pageContext.text);if(hierarchical){await generateAnswer('סכם את העמוד',{internalPrompt:hierarchical});return}}
-  await generateAnswer(prompt)
+  if(tool==='summarize-page'){
+    const hierarchical=await hierarchicalSummary(pageContext.text);
+    if(hierarchical){
+      await generateAnswer('סכם את העמוד',{internalPrompt:hierarchical});
+      return;
+    }
+  }
+  await generateAnswer(prompt);
 }
 
 async function checkAvailability(){
