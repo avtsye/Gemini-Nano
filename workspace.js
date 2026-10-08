@@ -251,9 +251,35 @@ function buildTextContext(userText){
   for(const a of pendingAttachments.filter(x=>x.kind==='text'))blocks.push('FILE: '+a.name+'\n'+relevantContext(a.text,userText));
   return blocks.length?userText+'\n\n'+blocks.join('\n\n---\n\n'):userText
 }
+function hebrewIntentGuard(originalText, translatedText){
+  const original=(originalText||'').trim();
+  const guards=[];
+
+  if(/משפט\s+בדיקה/.test(original) && /תקינות/.test(original)){
+    guards.push('The user wants one simple example sentence to verify that the chat/output works correctly. They are NOT asking for a sentence that checks factual correctness or validation criteria.');
+  }
+  if(/משפט\s+(אחד|בודד)/.test(original) || /במשפט\s+אחד/.test(original)){
+    guards.push('Return exactly one sentence.');
+  }
+  if(/בקצרה|קצר(?:ה|צר)?/.test(original)){
+    guards.push('Keep the answer very short.');
+  }
+  if(/רק\s+/.test(original)){
+    guards.push('Follow the requested output-only constraint; do not add alternatives, commentary, or explanation.');
+  }
+
+  if(!guards.length)return translatedText;
+  return 'IMPORTANT INTENT NOTES FROM THE ORIGINAL HEBREW:\n- '+guards.join('\n- ')+'\n\nAUTOMATIC ENGLISH TRANSLATION:\n'+translatedText;
+}
+
 async function normalizeInput(text,userQuestion){
-  const wantsHebrew=settings.answerLanguage==='he'||(settings.answerLanguage==='auto'&&containsHebrew(userQuestion));let modelText=text;
-  if(containsHebrew(text)){setStatus('מתרגם קלט...','warn');modelText=await translateText(text,'he','en')}
+  const wantsHebrew=settings.answerLanguage==='he'||(settings.answerLanguage==='auto'&&containsHebrew(userQuestion));
+  let modelText=text;
+  if(containsHebrew(text)){
+    setStatus('מתרגם קלט...','warn');
+    modelText=await translateText(text,'he','en');
+    modelText=hebrewIntentGuard(userQuestion,modelText);
+  }
   return{modelText:modelText+(wantsHebrew?'\nAnswer in English first; the app will translate the final answer to Hebrew.':'\nAnswer in English.'),wantsHebrew}
 }
 function buildMultimodalPrompt(modelText){
