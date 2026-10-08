@@ -205,15 +205,101 @@ function splitTranslationText(text,maxChars=3000){
   return chunks.filter(Boolean);
 }
 
+function hebrewTranslationLooksCorrupt(text){
+  const s=(text||'').trim();
+  if(!s)return true;
+
+  // Strong corruption signals seen in broken Translator API tails.
+  if(/(.)\1{6,}/u.test(s))return true;
+  if(/(?:\b[א-ת]{1,2}\b\s*){7,}/u.test(s))return true;
+  if(/(?:ם\s*){5,}/u.test(s))return true;
+
+  const letters=(s.match(/[A-Za-z\u0590-\u05FF]/g)||[]).length;
+  const hebrew=(s.match(/[\u0590-\u05FF]/g)||[]).length;
+  const replacement=(s.match(/[�]/g)||[]).length;
+  const oddMarks=(s.match(/[\u0591-\u05AF]/g)||[]).length;
+  const words=s.split(/\s+/).filter(Boolean);
+
+  if(replacement>0)return true;
+  if(letters>20 && hebrew/letters<0.35)return true;
+  if(words.length>12 && oddMarks>Math.max(8,hebrew*0.16))return true;
+
+  // Very high ratio of tiny Hebrew tokens is another common gibberish pattern.
+  const tinyHebrew=words.filter(w=>/^[א-ת]{1,2}$/u.test(w)).length;
+  if(words.length>=12 && tinyHebrew/words.length>0.42)return true;
+
+  return false;
+}
+
+function splitForTranslationRetry(text,maxChars=900){
+  const parts=(text||'')
+    .split(/(?<=[.!?])\s+|\n{2,}/)
+    .map(x=>x.trim())
+    .filter(Boolean);
+
+  const out=[];
+  let current='';
+  for(const part of parts){
+    const candidate=current ? current+' '+part : part;
+    if(candidate.length<=maxChars){current=candidate;continue}
+    if(current)out.push(current);
+    if(part.length<=maxChars){current=part;continue}
+    for(let i=0;i<part.length;i+=maxChars)out.push(part.slice(i,i+maxChars));
+    current='';
+  }
+  if(current)out.push(current);
+  return out;
+}
+
+async function translateChunkSafely(translator,chunk){
+  const first=(await translator.translate(chunk)).trim();
+  if(!hebrewTranslationLooksCorrupt(first))return {text:first,recovered:false,dropped:false};
+
+  const retryParts=splitForTranslationRetry(chunk,700);
+  const good=[];
+  for(const part of retryParts){
+    try{
+      const translated=(await translator.translate(part)).trim();
+      if(!hebrewTranslationLooksCorrupt(translated))good.push(translated);
+    }catch{}
+  }
+
+  const recovered=good.join(' ').trim();
+  if(recovered && !hebrewTranslationLooksCorrupt(recovered)){
+    return {text:recovered,recovered:true,dropped:false};
+  }
+
+  return {text:'',recovered:false,dropped:true};
+}
+
 async function translateText(text,from,to,onChunk){
   const t=await getTranslator(from,to);
-  const chunks=splitTranslationText(text,3000);
+  const chunks=splitTranslationText(text,to==='he'?1800:3000);
   let out='';
+  let droppedAny=false;
+  let recoveredAny=false;
+
   for(let i=0;i<chunks.length;i++){
-    const translated=await t.translate(chunks[i]);
+    let translated='';
+    if(to==='he'){
+      const result=await translateChunkSafely(t,chunks[i]);
+      translated=result.text;
+      droppedAny ||= result.dropped;
+      recoveredAny ||= result.recovered;
+    }else{
+      translated=(await t.translate(chunks[i])).trim();
+    }
+
+    if(!translated)continue;
     out += (out ? '\n\n' : '') + translated;
     onChunk?.(out);
   }
+
+  if(to==='he' && (droppedAny||recoveredAny)){
+    console.warn('Hebrew translation quality recovery',{droppedAny,recoveredAny});
+    if(droppedAny)toast('חלק קטן מהתרגום נפסל בגלל פלט משובש','warn');
+  }
+
   return out;
 }
 
@@ -668,7 +754,15 @@ async function generateAnswer(userText,{replaceIndex=null,internalPrompt=null,fo
         updateContextMeter();
       }
     }
-    if(normalized.wantsHebrew){setStatus('מתרגם תשובה...','warn');placeholder.text=await translateText(english,'en','he',out=>{if(bubble)bubble.innerHTML=renderMarkdown(out)})}else placeholder.text=english;
+    if(normalized.wantsHebrew){
+      setStatus('מתרגם תשובה...','warn');
+      const translated=await translateText(english,'en','he',out=>{if(bubble)bubble.innerHTML=renderMarkdown(out)});
+      placeholder.text=translated.trim();
+      if(!placeholder.text){
+        placeholder.text=english;
+        toast('התרגום לעברית נכשל, מוצגת התשובה המקורית באנגלית','error');
+      }
+    }else placeholder.text=english;
     bubble?.classList.remove('typing');setStatus('מוכן • מקומי','ok');pendingAttachments=[];renderAttachments();updateContextMeter()
   }catch(e){
     if(e?.name==='AbortError'){setStatus('הופסק','warn')}
